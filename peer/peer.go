@@ -41,12 +41,7 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 		return fmt.Errorf("failed to send request to the peer %s: %w", peer.Info.IP.String(), err)
 	}
 
-	response, err := io.ReadAll(peer.Connection)
-	if err != nil {
-		return fmt.Errorf("failed to get response from the peer %s: %w", peer.Info.IP.String(), err)
-	}
-
-	responseHandshake, err := deserializeHandshake(response)
+	responseHandshake, err := deserializeHandshake(peer.Connection)
 	if err != nil {
 		return fmt.Errorf("failed to decode handshake from peer %s: %w", peer.Info.IP.String(), err)
 	}
@@ -76,22 +71,46 @@ func (handshake *handshake) serialize() []byte {
 	return serialized
 }
 
-func deserializeHandshake(data []byte) (*handshake, error) {
-	if len(data) < handshakeLength {
-		return nil, fmt.Errorf("invalid length: expected %d, got %d", handshakeLength, len(data))
+func deserializeHandshake(data io.Reader) (*handshake, error) {
+	protocolNameLength := make([]byte, 1)
+	_, err := io.ReadFull(data, protocolNameLength)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read protocol name length: %w", err)
+	}
+	if protocolNameLength[0] != 19 {
+		return nil, fmt.Errorf("expected first byte to be 19, got %x", protocolNameLength[0])
 	}
 
-	if data[0] != 0x13 {
-		return nil, fmt.Errorf("expected first byte to be 0x13, got %x", data[0])
+	protocolIdentifierBytes := make([]byte, 19)
+	_, err = io.ReadFull(data, protocolIdentifierBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read protocol identifier: %w", err)
 	}
-
-	parsedProtocolIdentifier := string(data[1:20])
+	parsedProtocolIdentifier := string(protocolIdentifierBytes)
 	if parsedProtocolIdentifier != protocolIdentifier {
 		return nil, fmt.Errorf("invalid protocol identifier: expected %s, got %s", protocolIdentifier, parsedProtocolIdentifier)
 	}
 
+	var reserved [8]byte
+	_, err = io.ReadFull(data, reserved[:])
+	if err != nil {
+		return nil, fmt.Errorf("failed to read reserved bytes: %w", err)
+	}
+
+	var infoHash [sha1.Size]byte
+	_, err = io.ReadFull(data, infoHash[:])
+	if err != nil {
+		return nil, fmt.Errorf("failed to read info hash: %w", err)
+	}
+
+	var peerID [20]byte
+	_, err = io.ReadFull(data, peerID[:])
+	if err != nil {
+		return nil, fmt.Errorf("failed to read peer ID: %w", err)
+	}
+
 	return &handshake{
-		InfoHash: [sha1.Size]byte(data[28 : 28+sha1.Size]),
-		PeerID:   [20]byte(data[28+sha1.Size : 28+sha1.Size+20]),
+		InfoHash: infoHash,
+		PeerID:   peerID,
 	}, nil
 }

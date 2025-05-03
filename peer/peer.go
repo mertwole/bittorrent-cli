@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mertwole/bittorent-cli/download"
 	"github.com/mertwole/bittorent-cli/peer/message"
 	"github.com/mertwole/bittorent-cli/torrent_info"
 	"github.com/mertwole/bittorent-cli/tracker"
@@ -67,9 +68,9 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 	return nil
 }
 
-func (peer *Peer) StartDownload(torrent *torrent_info.TorrentInfo) error {
+func (peer *Peer) StartDownload(torrent *torrent_info.TorrentInfo, downloadedPiecesChannel chan download.DownloadedPiece) error {
 	go peer.sendKeepAlive()
-	go peer.requestPieces()
+	go peer.requestPieces(torrent)
 
 	for {
 		receivedMessage, err := message.Decode(peer.connection)
@@ -92,7 +93,7 @@ func (peer *Peer) StartDownload(torrent *torrent_info.TorrentInfo) error {
 		case message.NotInterested:
 			// TODO
 		case message.Have:
-			// TODO
+			// TODO: Write bit to the bitfield
 		case message.Bitfield:
 			peer.availablePieces = bitfield{bitfield: receivedMessage.Payload}
 		case message.Request:
@@ -101,31 +102,46 @@ func (peer *Peer) StartDownload(torrent *torrent_info.TorrentInfo) error {
 			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
 			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
 
+			// TODO: Check piece hash.
+
 			log.Printf(
 				"received piece. index: %d, begin: %d, length: %d",
 				index,
 				begin,
 				len(receivedMessage.Payload)-8,
 			)
+
+			globalOffset := int(index)*torrent.PieceLength + int(begin)
+
+			downloadedPiecesChannel <- download.DownloadedPiece{Offset: globalOffset, Data: receivedMessage.Payload[8:]}
 		case message.Cancel:
 			// TODO
 		}
 	}
 }
 
-func (peer *Peer) requestPieces() {
-	var piece uint32 = 0
+const pieceRequest = 1 << 14
+
+func (peer *Peer) requestPieces(torrent *torrent_info.TorrentInfo) {
+	var offset int = 0
 
 	for {
 		if peer.chocked {
-			time.Sleep(time.Second * 5)
+			time.Sleep(time.Millisecond * 100)
 			continue
 		}
 
+		piece := offset / torrent.PieceLength
+
+		requestLength := pieceRequest
+		if offset+pieceRequest >= torrent.Length {
+			requestLength = torrent.Length - offset
+		}
+
 		messagePayload := make([]byte, 12)
-		binary.BigEndian.PutUint32(messagePayload[:4], piece)
-		binary.BigEndian.PutUint32(messagePayload[4:8], 0)
-		binary.BigEndian.PutUint32(messagePayload[8:12], 1<<14)
+		binary.BigEndian.PutUint32(messagePayload[:4], uint32(piece))                       // index
+		binary.BigEndian.PutUint32(messagePayload[4:8], uint32(offset%torrent.PieceLength)) // begin
+		binary.BigEndian.PutUint32(messagePayload[8:12], uint32(requestLength))             // length
 
 		request := (&message.Message{ID: message.Request, Payload: messagePayload}).Encode()
 		_, err := peer.connection.Write(request)
@@ -133,9 +149,13 @@ func (peer *Peer) requestPieces() {
 			log.Printf("error sending piece request: %v", err)
 		}
 
-		piece++
+		offset += requestLength
 
-		time.Sleep(time.Second)
+		if offset >= torrent.Length {
+			return
+		}
+
+		time.Sleep(time.Millisecond * 100)
 	}
 }
 

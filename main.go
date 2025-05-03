@@ -30,6 +30,8 @@ func main() {
 		log.Fatal("Failed to send request to the tracker: ", err)
 	}
 
+	log.Printf("Discovered %d peers", len(trackerResponse.Peers))
+
 	peer := peer.Peer{}
 	err = peer.Connect(&trackerResponse.Peers[0])
 	if err != nil {
@@ -39,5 +41,10 @@ func main() {
 	err = peer.Handshake(torrentInfo)
 	if err != nil {
 		log.Fatal("Failed to handshake with the peer: ", err)
+	}
+
+	err = peer.StartDownload(torrentInfo)
+	if err != nil {
+		log.Fatal("Failed to start downloading data from peer: ", err)
 	}
 }

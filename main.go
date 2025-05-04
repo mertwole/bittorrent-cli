@@ -16,7 +16,7 @@ import (
 const maxConnections = 8
 
 var torrentFileName = flag.String("torrent", "./data/torrent.torrent", "Path to the .torrent file")
-var downloadFileName = flag.String("download", "./data/download", "Path to the downloaded file")
+var downloadFolderName = flag.String("download", "./data", "Path to the downloaded folder")
 
 func main() {
 	flag.Parse()
@@ -31,7 +31,7 @@ func main() {
 		log.Fatal("Failed to decode torrent file: ", err)
 	}
 
-	downloadedPiecesChannel, err := download.Start(*downloadFileName, torrentInfo.Length)
+	downloadedPiecesChannel, err := download.Start(torrentInfo, *downloadFolderName, torrentInfo.Length)
 	if err != nil {
 		log.Fatal("Failed to start download service: ", err)
 	}

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+
+	"github.com/mertwole/bittorent-cli/torrent_info"
 )
 
 type DownloadedPiece struct {
@@ -13,10 +16,11 @@ type DownloadedPiece struct {
 
 const initialWriteChunkSize = 1024
 
-func Start(fileName string, totalLength int) (chan<- DownloadedPiece, error) {
-	file, err := os.Create(fileName)
+func Start(torrent *torrent_info.TorrentInfo, targetFolder string, totalLength int) (chan<- DownloadedPiece, error) {
+	fullPath := filepath.Join(targetFolder, torrent.Name)
+	file, err := os.Create(fullPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create output file %s: %w", fileName, err)
+		return nil, fmt.Errorf("failed to create output file %s: %w", fullPath, err)
 	}
 
 	// TODO: Check if the file already contains valid pieces.

@@ -16,7 +16,7 @@ import (
 const maxConnections = 8
 
 var torrentFileName = flag.String("torrent", "./data/torrent.torrent", "Path to the .torrent file")
-var downloadFolderName = flag.String("download", "./data", "Path to the downloaded folder")
+var downloadFolderName = flag.String("download", "./data", "Path to the download folder")
 
 func main() {
 	flag.Parse()

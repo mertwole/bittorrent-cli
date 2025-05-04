@@ -13,7 +13,7 @@ import (
 	"github.com/mertwole/bittorent-cli/tracker"
 )
 
-const maxConnections = 4
+const maxConnections = 8
 
 var torrentFileName = flag.String("torrent", "./data/torrent.torrent", "Path to the .torrent file")
 var downloadFileName = flag.String("download", "./data/download", "Path to the downloaded file")
@@ -60,22 +60,24 @@ func main() {
 			log.Printf("Failed to connect to the peer: %v", err)
 			continue
 		}
-		peers = append(peers, peer)
 
-		if len(peers) >= maxConnections {
-			break
-		}
-	}
-
-	for _, peer := range peers {
 		err = peer.Handshake(torrentInfo)
 		if err != nil {
-			log.Fatal("Failed to handshake with the peer: ", err)
+			log.Printf("Failed to handshake with the peer: %v", err)
+			continue
 		}
+
+		log.Printf("connected to the peer %+v", peerInfo)
 
 		err = peer.StartDownload(torrentInfo, requestedPiecesChannel, downloadedPiecesChannel)
 		if err != nil {
 			log.Fatal("Failed to start downloading data from peer: ", err)
+		}
+
+		peers = append(peers, peer)
+
+		if len(peers) >= maxConnections {
+			break
 		}
 	}
 

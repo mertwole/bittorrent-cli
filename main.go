@@ -7,6 +7,7 @@ import (
 
 	"github.com/mertwole/bittorent-cli/download"
 	"github.com/mertwole/bittorent-cli/peer"
+	"github.com/mertwole/bittorent-cli/piece_scheduler"
 	"github.com/mertwole/bittorent-cli/torrent_info"
 	"github.com/mertwole/bittorent-cli/tracker"
 )
@@ -27,11 +28,14 @@ func main() {
 		log.Fatal("Failed to decode torrent file: ", err)
 	}
 
-	downloadedPiecesChannel := make(chan download.DownloadedPiece)
-	err = download.Start(*downloadFileName, torrentInfo.Length, downloadedPiecesChannel)
+	downloadedPiecesChannel, err := download.Start(*downloadFileName, torrentInfo.Length)
 	if err != nil {
 		log.Fatal("Failed to start download service: ", err)
 	}
+
+	donePieces := make([]int, 0)
+	pieceScheduler := piece_scheduler.Create(len(torrentInfo.Pieces), donePieces)
+	requestedPiecesChannel := pieceScheduler.Start()
 
 	trackerResponse, err := tracker.SendRequest(torrentInfo)
 	if err != nil {
@@ -51,7 +55,7 @@ func main() {
 		log.Fatal("Failed to handshake with the peer: ", err)
 	}
 
-	err = peer.StartDownload(torrentInfo, downloadedPiecesChannel)
+	err = peer.StartDownload(torrentInfo, requestedPiecesChannel, downloadedPiecesChannel)
 	if err != nil {
 		log.Fatal("Failed to start downloading data from peer: ", err)
 	}

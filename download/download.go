@@ -13,25 +13,27 @@ type DownloadedPiece struct {
 
 const initialWriteChunkSize = 1024
 
-func Start(fileName string, totalLength int, pieces chan DownloadedPiece) error {
+func Start(fileName string, totalLength int) (chan<- DownloadedPiece, error) {
 	file, err := os.Create(fileName)
 	if err != nil {
-		return fmt.Errorf("failed to create output file %s: %w", fileName, err)
+		return nil, fmt.Errorf("failed to create output file %s: %w", fileName, err)
 	}
 
 	// TODO: Check if the file already contains valid pieces.
 
-	for i := 0; i < totalLength/initialWriteChunkSize; i++ {
+	for range totalLength / initialWriteChunkSize {
 		file.Write(make([]byte, initialWriteChunkSize))
 	}
 	file.Write(make([]byte, totalLength%initialWriteChunkSize))
 
+	pieces := make(chan DownloadedPiece)
+
 	go writePieces(file, pieces)
 
-	return nil
+	return pieces, nil
 }
 
-func writePieces(file *os.File, pieces chan DownloadedPiece) {
+func writePieces(file *os.File, pieces <-chan DownloadedPiece) {
 	defer file.Close()
 
 	for {

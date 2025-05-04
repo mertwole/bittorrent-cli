@@ -3,6 +3,9 @@ package tracker
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
+	"log"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -32,6 +35,22 @@ func SendRequest(torrent *torrent_info.TorrentInfo) (*TrackerResponse, error) {
 	var address = *torrent.Announce
 
 	peerID := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+	switch address.Scheme {
+	case "http":
+		return sendHTTPRequest(&address, peerID, torrent)
+	case "udp":
+		return sendUDPRequest(&address, peerID, torrent)
+	default:
+		return nil, fmt.Errorf("unsupported tracker scheme: %s", address.Scheme)
+	}
+}
+
+func sendHTTPRequest(
+	address *url.URL,
+	peerID []byte,
+	torrent *torrent_info.TorrentInfo,
+) (*TrackerResponse, error) {
 	Port := 6881
 
 	address.RawQuery = url.Values{
@@ -66,6 +85,67 @@ func SendRequest(torrent *torrent_info.TorrentInfo) (*TrackerResponse, error) {
 		Interval: decodedResponse.Interval,
 		Peers:    peers,
 	}, nil
+}
+
+func sendUDPRequest(
+	address *url.URL,
+	peerID []byte,
+	torrent *torrent_info.TorrentInfo,
+) (*TrackerResponse, error) {
+	transcactionID := rand.Uint32()
+
+	connectionRequest := make([]byte, 16)
+	binary.BigEndian.PutUint64(connectionRequest[:8], 0x41727101980)
+	binary.BigEndian.PutUint32(connectionRequest[8:12], 0) // action: connect
+	binary.BigEndian.PutUint32(connectionRequest[12:], transcactionID)
+
+	udpAddr, err := net.ResolveUDPAddr("udp", address.Host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve UDP tracker address %s: %w", address.String(), err)
+	}
+
+	conn, err := net.DialUDP("udp", nil, udpAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to the UDP tracker %s: %w", address.String(), err)
+	}
+
+	_, err = conn.Write(connectionRequest)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to send connection request to the UDP tracker %s: %w",
+			address.String(),
+			err,
+		)
+	}
+
+	response, err := io.ReadAll(conn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to receive response from the UDP tracker %s: %w", address.String(), err)
+	}
+
+	if len(response) < 16 {
+		return nil, fmt.Errorf("invalid connection response received from UDP tracker: %v", response)
+	}
+
+	responseAction := binary.BigEndian.Uint32(response[:4])
+	if responseAction != 0 {
+		return nil, fmt.Errorf("invalid action in UDP tracker response: %d, expected 0", responseAction)
+	}
+
+	responseTransactionID := binary.BigEndian.Uint32(response[4:8])
+	if responseTransactionID != transcactionID {
+		return nil, fmt.Errorf(
+			"invalid transaction ID in UDP tracker response: %x, expected %x",
+			responseTransactionID,
+			transcactionID,
+		)
+	}
+
+	responseConnectionID := binary.BigEndian.Uint64(response[8:12])
+
+	log.Printf("connection ID: %x", responseConnectionID)
+
+	return nil, nil
 }
 
 func decodePeerInfo(peers *string) ([]PeerInfo, error) {

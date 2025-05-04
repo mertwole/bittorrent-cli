@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -30,16 +31,32 @@ type trackerResponseBencode struct {
 	Peers    string `bencode:"peers"`
 }
 
+type announceRequest struct {
+	infoHash   [sha1.Size]byte
+	peerID     [20]byte
+	downloaded uint64
+	left       uint64
+	uploaded   uint64
+}
+
 func SendRequest(torrent *torrent_info.TorrentInfo) (*TrackerResponse, error) {
 	var address = *torrent.Announce
 
-	peerID := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	peerID := [20]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+	announceRequest := announceRequest{
+		infoHash:   torrent.InfoHash,
+		peerID:     peerID,
+		downloaded: 0,
+		uploaded:   0,
+		left:       uint64(torrent.Length),
+	}
 
 	switch address.Scheme {
 	case "http":
-		return sendHTTPRequest(&address, peerID, torrent)
+		return sendHTTPRequest(&address, &announceRequest)
 	case "udp":
-		return sendUDPRequest(&address, peerID, torrent)
+		return sendUDPRequest(&address, &announceRequest)
 	default:
 		return nil, fmt.Errorf("unsupported tracker scheme: %s", address.Scheme)
 	}
@@ -47,19 +64,18 @@ func SendRequest(torrent *torrent_info.TorrentInfo) (*TrackerResponse, error) {
 
 func sendHTTPRequest(
 	address *url.URL,
-	peerID []byte,
-	torrent *torrent_info.TorrentInfo,
+	announceRequest *announceRequest,
 ) (*TrackerResponse, error) {
 	Port := 6881
 
 	address.RawQuery = url.Values{
-		"info_hash":  []string{string(torrent.InfoHash[:])},
-		"peer_id":    []string{string(peerID[:])},
+		"info_hash":  []string{string(announceRequest.infoHash[:])},
+		"peer_id":    []string{string(announceRequest.peerID[:])},
 		"port":       []string{strconv.Itoa(int(Port))},
-		"uploaded":   []string{"0"},
-		"downloaded": []string{"0"},
+		"uploaded":   []string{strconv.FormatUint(announceRequest.uploaded, 10)},
+		"downloaded": []string{strconv.FormatUint(announceRequest.downloaded, 10)},
 		"compact":    []string{"1"},
-		"left":       []string{strconv.Itoa(torrent.Length)},
+		"left":       []string{strconv.FormatUint(announceRequest.left, 10)},
 	}.Encode()
 
 	response, err := http.Get(address.String())
@@ -88,8 +104,7 @@ func sendHTTPRequest(
 
 func sendUDPRequest(
 	address *url.URL,
-	peerID []byte,
-	torrent *torrent_info.TorrentInfo,
+	announceRequest *announceRequest,
 ) (*TrackerResponse, error) {
 	udpAddr, err := net.ResolveUDPAddr("udp", address.Host)
 	if err != nil {
@@ -163,6 +178,15 @@ func sendUDPConnectionRequest(connection *net.UDPConn, transactionID uint32) (co
 	}
 
 	return binary.BigEndian.Uint64(response[8:16]), nil
+}
+
+func sendUDPAnnounceRequest(
+	connection *net.UDPConn,
+	transactionID uint32,
+	connectionID uint64,
+	annannounceRequest *announceRequest,
+) {
+	//
 }
 
 func decodePeerInfo(peers *string) ([]PeerInfo, error) {

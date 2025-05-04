@@ -1,7 +1,9 @@
 package peer
 
 import (
+	"crypto/sha1"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
@@ -14,13 +16,22 @@ import (
 	"github.com/mertwole/bittorent-cli/tracker"
 )
 
-const connectionTimeout = time.Second
+const connectionTimeout = time.Second * 5
+const pendingPiecesQueueLength = 16
 
 type Peer struct {
 	info            tracker.PeerInfo
 	connection      net.Conn
 	availablePieces bitfield
 	chocked         bool
+	pendingPieces   map[int]*pendingPiece // TODO: check for stale pending pieces and retry download.
+}
+
+type pendingPiece struct {
+	idx            int
+	data           []byte
+	totalBlocks    int
+	blocksReceived int
 }
 
 type bitfield struct {
@@ -30,6 +41,7 @@ type bitfield struct {
 func (peer *Peer) Connect(info *tracker.PeerInfo) error {
 	peer.info = *info
 	peer.chocked = true
+	peer.pendingPieces = make(map[int]*pendingPiece)
 
 	conn, err := net.DialTimeout("tcp", info.IP.String()+":"+strconv.Itoa(int(info.Port)), connectionTimeout)
 	if err != nil {
@@ -76,17 +88,25 @@ func (peer *Peer) StartDownload(
 	downloadedPieces chan<- download.DownloadedPiece,
 ) error {
 	go peer.sendKeepAlive()
-	go peer.requestBlocks(torrent, requestedPieces)
-	go peer.listen(torrent, downloadedPieces)
+
+	pendingPieces := make(chan pendingPiece, pendingPiecesQueueLength)
+
+	go peer.requestBlocks(torrent, requestedPieces, pendingPieces)
+	go peer.listen(torrent, downloadedPieces, pendingPieces)
 
 	return nil
 }
 
-func (peer *Peer) listen(torrent *torrent_info.TorrentInfo, downloadedPieces chan<- download.DownloadedPiece) {
+func (peer *Peer) listen(
+	torrent *torrent_info.TorrentInfo,
+	downloadedPieces chan<- download.DownloadedPiece,
+	pendingPieces <-chan pendingPiece,
+) {
 	for {
 		receivedMessage, err := message.Decode(peer.connection)
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("failed to decode message from peer %+v: %v", peer.info, err)
+			continue
 		}
 
 		if receivedMessage == nil {
@@ -110,21 +130,42 @@ func (peer *Peer) listen(torrent *torrent_info.TorrentInfo, downloadedPieces cha
 		case message.Request:
 			// TODO
 		case message.Piece:
+		Outer:
+			for {
+				select {
+				case newPendingPiece := <-pendingPieces:
+					peer.pendingPieces[newPendingPiece.idx] = &newPendingPiece
+				default:
+					break Outer
+				}
+			}
+
 			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
 			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
 
-			// TODO: Check piece hash.
+			pendingPiece, ok := peer.pendingPieces[int(index)]
+			if !ok {
+				log.Fatalf("unexpected piece #%d received", index)
+			}
 
-			log.Printf(
-				"received piece. index: %d, begin: %d, length: %d",
-				index,
-				begin,
-				len(receivedMessage.Payload)-8,
-			)
+			copy(pendingPiece.data[begin:], receivedMessage.Payload[8:])
+			pendingPiece.blocksReceived++
 
-			globalOffset := int(index)*torrent.PieceLength + int(begin)
+			if pendingPiece.blocksReceived == pendingPiece.totalBlocks {
+				log.Printf("received piece. #%d", index)
 
-			downloadedPieces <- download.DownloadedPiece{Offset: globalOffset, Data: receivedMessage.Payload[8:]}
+				sha1 := sha1.Sum(pendingPiece.data)
+				if torrent.Pieces[index] != sha1 {
+					log.Printf(
+						"received piece with invalid hash: expected %s, got %s",
+						hex.EncodeToString(torrent.Pieces[index][:]),
+						hex.EncodeToString(sha1[:]),
+					)
+				}
+
+				globalOffset := int(index) * torrent.PieceLength
+				downloadedPieces <- download.DownloadedPiece{Offset: globalOffset, Data: pendingPiece.data}
+			}
 		case message.Cancel:
 			// TODO
 		}
@@ -133,7 +174,11 @@ func (peer *Peer) listen(torrent *torrent_info.TorrentInfo, downloadedPieces cha
 
 const blockSize = 1 << 14
 
-func (peer *Peer) requestBlocks(torrent *torrent_info.TorrentInfo, requestedPieces chan int) {
+func (peer *Peer) requestBlocks(
+	torrent *torrent_info.TorrentInfo,
+	requestedPieces chan int,
+	pendingPieces chan<- pendingPiece,
+) {
 	for {
 		if peer.chocked {
 			time.Sleep(time.Millisecond * 100)
@@ -150,6 +195,13 @@ func (peer *Peer) requestBlocks(torrent *torrent_info.TorrentInfo, requestedPiec
 
 		pieceLength := min(torrent.PieceLength, torrent.Length-piece*torrent.PieceLength)
 		blockCount := (pieceLength + blockSize - 1) / blockSize
+
+		pendingPieces <- pendingPiece{
+			idx:            piece,
+			data:           make([]byte, pieceLength),
+			totalBlocks:    blockCount,
+			blocksReceived: 0,
+		}
 
 		for block := range blockCount {
 			length := min(blockSize, pieceLength-block*blockSize)

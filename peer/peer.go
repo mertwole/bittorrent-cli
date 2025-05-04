@@ -14,6 +14,8 @@ import (
 	"github.com/mertwole/bittorent-cli/tracker"
 )
 
+const connectionTimeout = time.Second
+
 type Peer struct {
 	info            tracker.PeerInfo
 	connection      net.Conn
@@ -29,7 +31,7 @@ func (peer *Peer) Connect(info *tracker.PeerInfo) error {
 	peer.info = *info
 	peer.chocked = true
 
-	conn, err := net.Dial("tcp", info.IP.String()+":"+strconv.Itoa(int(info.Port)))
+	conn, err := net.DialTimeout("tcp", info.IP.String()+":"+strconv.Itoa(int(info.Port)), connectionTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to establish connection with peer %s: %w", info.IP.String(), err)
 	}
@@ -75,7 +77,12 @@ func (peer *Peer) StartDownload(
 ) error {
 	go peer.sendKeepAlive()
 	go peer.requestBlocks(torrent, requestedPieces)
+	go peer.listen(torrent, downloadedPieces)
 
+	return nil
+}
+
+func (peer *Peer) listen(torrent *torrent_info.TorrentInfo, downloadedPieces chan<- download.DownloadedPiece) {
 	for {
 		receivedMessage, err := message.Decode(peer.connection)
 		if err != nil {

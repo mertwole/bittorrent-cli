@@ -31,12 +31,13 @@ func main() {
 		log.Fatal("Failed to decode torrent file: ", err)
 	}
 
-	downloadedPiecesChannel, err := download.Start(torrentInfo, *downloadFolderName, torrentInfo.Length)
+	downloadedPiecesChannel, donePieces, err := download.Start(torrentInfo, *downloadFolderName)
 	if err != nil {
 		log.Fatal("Failed to start download service: ", err)
 	}
 
-	donePieces := make([]int, 0)
+	log.Printf("Discovered %d already downloaded pieces", len(donePieces))
+
 	pieceScheduler := piece_scheduler.Create(len(torrentInfo.Pieces), donePieces)
 	requestedPiecesChannel := pieceScheduler.Start()
 

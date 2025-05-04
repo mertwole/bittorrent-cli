@@ -4,7 +4,6 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"log"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -119,12 +118,23 @@ func sendUDPRequest(
 	transcactionID := rand.Uint32()
 	connectionID, err := sendUDPConnectionRequest(conn, transcactionID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to the UDP tracker %s: %w", address.String(), err)
+		return nil, fmt.Errorf(
+			"failed to send connection request to the UDP tracker %s: %w",
+			address.String(),
+			err,
+		)
 	}
 
-	log.Printf("connection ID: %x", connectionID)
+	trackerResponse, err := sendUDPAnnounceRequest(conn, transcactionID, connectionID, announceRequest)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to send announce request to the UDP tracker %s: %w",
+			address.String(),
+			err,
+		)
+	}
 
-	return nil, nil
+	return trackerResponse, nil
 }
 
 type connectionID = uint64
@@ -137,41 +147,29 @@ func sendUDPConnectionRequest(connection *net.UDPConn, transactionID uint32) (co
 
 	_, err := connection.Write(connectionRequest)
 	if err != nil {
-		return 0, fmt.Errorf(
-			"failed to send connection request to the UDP tracker %s: %w",
-			connection.RemoteAddr().String(),
-			err,
-		)
+		return 0, fmt.Errorf("failed to send request: %w", err)
 	}
 
 	response := make([]byte, 16)
 
 	responseBytes, err := connection.Read(response)
 	if err != nil {
-		return 0, fmt.Errorf(
-			"failed to receive response from the UDP tracker %s: %w",
-			connection.RemoteAddr().String(),
-			err,
-		)
+		return 0, fmt.Errorf("failed to receive response: %w", err)
 	}
 
 	if responseBytes < len(response) {
-		return 0, fmt.Errorf(
-			"connection response with invalid length is received from the UDP tracker %s: length is %d",
-			connection.RemoteAddr().String(),
-			responseBytes,
-		)
+		return 0, fmt.Errorf("invalid response length: length is %d", responseBytes)
 	}
 
 	responseAction := binary.BigEndian.Uint32(response[:4])
 	if responseAction != 0 {
-		return 0, fmt.Errorf("invalid action in UDP tracker response: %d, expected 0", responseAction)
+		return 0, fmt.Errorf("invalid action received: %d, expected 0", responseAction)
 	}
 
 	responseTransactionID := binary.BigEndian.Uint32(response[4:8])
 	if responseTransactionID != transactionID {
 		return 0, fmt.Errorf(
-			"invalid transaction ID in UDP tracker response: %x, expected %x",
+			"invalid transaction ID received: %x, expected %x",
 			responseTransactionID,
 			transactionID,
 		)
@@ -184,9 +182,56 @@ func sendUDPAnnounceRequest(
 	connection *net.UDPConn,
 	transactionID uint32,
 	connectionID uint64,
-	annannounceRequest *announceRequest,
-) {
-	//
+	announceRequest *announceRequest,
+) (*TrackerResponse, error) {
+	// Offset  Size    			Name    		Value
+	// 0       64-bit integer  	connection_id
+	// 8       32-bit integer  	action          1 // announce
+	// 12      32-bit integer  	transaction_id
+	// 16      20-byte string  	info_hash
+	// 36      20-byte string  	peer_id
+	// 56      64-bit integer  	downloaded
+	// 64      64-bit integer  	left
+	// 72      64-bit integer  	uploaded
+	// 80      32-bit integer  	event           0 // 0: none; 1: completed; 2: started; 3: stopped
+	// 84      32-bit integer  	IP address      0 // default
+	// 88      32-bit integer  	key
+	// 92      32-bit integer  	num_want        -1 // default
+	// 96      16-bit integer  	port
+	// 98
+
+	request := make([]byte, 98)
+
+	binary.BigEndian.PutUint64(request[:8], connectionID)
+	binary.BigEndian.PutUint32(request[8:12], 1) // action: announce
+	binary.BigEndian.PutUint32(request[12:16], transactionID)
+	copy(request[16:36], announceRequest.infoHash[:])
+	copy(request[36:56], announceRequest.peerID[:])
+	binary.BigEndian.PutUint64(request[56:64], announceRequest.downloaded)
+	binary.BigEndian.PutUint64(request[64:72], announceRequest.left)
+	binary.BigEndian.PutUint64(request[72:80], announceRequest.uploaded)
+	binary.BigEndian.PutUint32(request[80:84], 0) // event: none
+	// TODO: IP address
+	// TODO: key
+	copy(request[92:96], []byte{0xFF, 0xFF, 0xFF, 0xFF}) // num_want: default: -1
+	// TODO: Port
+
+	_, err := connection.Write(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+
+	// Offset      Size            Name            Value
+	// 0           32-bit integer  action          1 // announce
+	// 4           32-bit integer  transaction_id
+	// 8           32-bit integer  interval
+	// 12          32-bit integer  leechers
+	// 16          32-bit integer  seeders
+	// 20 + 6 * n  32-bit integer  IP address
+	// 24 + 6 * n  16-bit integer  TCP port
+	// 20 + 6 * N
+
+	return nil, nil
 }
 
 func decodePeerInfo(peers *string) ([]PeerInfo, error) {

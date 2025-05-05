@@ -209,7 +209,8 @@ func sendUDPAnnounceRequest(
 	connectionID uint64,
 	announceRequest *announceRequest,
 ) (*TrackerResponse, error) {
-	Port := 6881
+	var port uint16 = 6881
+	var key uint32 = 0xAABBCCDD
 
 	// Offset  Size    			Name    		Value
 	// 0       64-bit integer  	connection_id
@@ -239,9 +240,9 @@ func sendUDPAnnounceRequest(
 	binary.BigEndian.PutUint64(request[72:80], announceRequest.uploaded)
 	binary.BigEndian.PutUint32(request[80:84], 0) // event: none
 	// TODO: IP address
-	// TODO: key
+	binary.BigEndian.PutUint32(request[88:92], key)
 	copy(request[92:96], []byte{0xFF, 0xFF, 0xFF, 0xFF}) // num_want: default: -1
-	binary.BigEndian.PutUint16(request[96:98], uint16(Port))
+	binary.BigEndian.PutUint16(request[96:98], port)
 
 	_, err := connection.Write(request)
 	if err != nil {

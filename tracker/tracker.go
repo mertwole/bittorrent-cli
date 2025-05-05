@@ -10,10 +10,14 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/jackpal/bencode-go"
 	"github.com/mertwole/bittorent-cli/torrent_info"
 )
+
+const maxAnnounceResponseLength = 1024
+const udpReadTimeout = time.Second * 30
 
 type TrackerResponse struct {
 	Interval int
@@ -101,6 +105,22 @@ func sendHTTPRequest(
 	}, nil
 }
 
+func decodePeerInfo(peers *string) ([]PeerInfo, error) {
+	if len(*peers)%6 != 0 {
+		return nil, fmt.Errorf("invalid peer list format")
+	}
+
+	peerInfos := make([]PeerInfo, 0)
+	for info := range slices.Chunk([]byte(*peers), 6) {
+		peerInfos = append(peerInfos, PeerInfo{
+			IP:   net.IP(info[:4]),
+			Port: binary.BigEndian.Uint16(info[4:]),
+		})
+	}
+
+	return peerInfos, nil
+}
+
 func sendUDPRequest(
 	address *url.URL,
 	announceRequest *announceRequest,
@@ -113,6 +133,11 @@ func sendUDPRequest(
 	conn, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to the UDP tracker %s: %w", address.String(), err)
+	}
+
+	err = conn.SetReadDeadline(time.Now().Add(udpReadTimeout))
+	if err != nil {
+		return nil, fmt.Errorf("failed to set UDP read timeout: %w", err)
 	}
 
 	transcactionID := rand.Uint32()
@@ -184,6 +209,8 @@ func sendUDPAnnounceRequest(
 	connectionID uint64,
 	announceRequest *announceRequest,
 ) (*TrackerResponse, error) {
+	Port := 6881
+
 	// Offset  Size    			Name    		Value
 	// 0       64-bit integer  	connection_id
 	// 8       32-bit integer  	action          1 // announce
@@ -214,7 +241,7 @@ func sendUDPAnnounceRequest(
 	// TODO: IP address
 	// TODO: key
 	copy(request[92:96], []byte{0xFF, 0xFF, 0xFF, 0xFF}) // num_want: default: -1
-	// TODO: Port
+	binary.BigEndian.PutUint16(request[96:98], uint16(Port))
 
 	_, err := connection.Write(request)
 	if err != nil {
@@ -231,21 +258,46 @@ func sendUDPAnnounceRequest(
 	// 24 + 6 * n  16-bit integer  TCP port
 	// 20 + 6 * N
 
-	return nil, nil
-}
-
-func decodePeerInfo(peers *string) ([]PeerInfo, error) {
-	if len(*peers)%6 != 0 {
-		return nil, fmt.Errorf("invalid peer list format")
+	response := make([]byte, maxAnnounceResponseLength)
+	responseLength, err := connection.Read(response)
+	if err != nil {
+		return nil, fmt.Errorf("failed to receive response: %w", err)
 	}
 
-	peerInfos := make([]PeerInfo, 0)
-	for info := range slices.Chunk([]byte(*peers), 6) {
-		peerInfos = append(peerInfos, PeerInfo{
-			IP:   net.IP(info[:4]),
-			Port: binary.BigEndian.Uint16(info[4:]),
-		})
+	if responseLength < 20 || (responseLength-20)%6 != 0 {
+		return nil, fmt.Errorf("received response of unexpected length: %d", responseLength)
 	}
 
-	return peerInfos, nil
+	responseAction := binary.BigEndian.Uint32(response[:4])
+	if responseAction != 1 {
+		return nil, fmt.Errorf("unexpected action in response: %d, expected 1", responseAction)
+	}
+
+	responseTransactionID := binary.BigEndian.Uint32(response[4:8])
+	if responseTransactionID != transactionID {
+		return nil, fmt.Errorf(
+			"invalid transaction id is received in response: %x, expected %x",
+			responseTransactionID,
+			transactionID,
+		)
+	}
+
+	responseInterval := binary.BigEndian.Uint32(response[8:12])
+
+	decodedResponse := &TrackerResponse{
+		Interval: int(responseInterval),
+		Peers:    make([]PeerInfo, 0),
+	}
+
+	responseLeechers := binary.BigEndian.Uint32(response[12:16])
+	_ = responseLeechers
+	responseSeeders := binary.BigEndian.Uint32(response[16:20])
+	_ = responseSeeders
+
+	for peer := range slices.Chunk(response[20:responseLength], 6) {
+		peerInfo := PeerInfo{IP: net.IP(peer[:4]), Port: binary.BigEndian.Uint16(peer[4:])}
+		decodedResponse.Peers = append(decodedResponse.Peers, peerInfo)
+	}
+
+	return decodedResponse, nil
 }

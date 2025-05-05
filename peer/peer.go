@@ -16,7 +16,7 @@ import (
 	"github.com/mertwole/bittorent-cli/tracker"
 )
 
-const connectionTimeout = time.Second * 5
+const connectionTimeout = time.Second * 60
 const pendingPiecesQueueLength = 16
 
 type Peer struct {

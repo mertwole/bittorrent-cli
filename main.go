@@ -43,7 +43,7 @@ func main() {
 
 	peersInfo := make([]tracker.PeerInfo, 0)
 	for _, trackerURL := range torrentInfo.Trackers {
-		trackerResponse, err := tracker.SendRequest(trackerURL, torrentInfo.InfoHash, torrentInfo.Length)
+		trackerResponse, err := tracker.SendRequest(trackerURL, torrentInfo.InfoHash, torrentInfo.TotalLength)
 		if err != nil {
 			log.Printf("Failed to send request to the tracker: %v", err)
 			continue

@@ -15,7 +15,7 @@ type TorrentInfo struct {
 	Trackers    []*url.URL
 	Pieces      [][sha1.Size]byte
 	PieceLength int
-	Length      int
+	TotalLength int
 	Name        string
 	Files       []FileInfo
 	InfoHash    [sha1.Size]byte
@@ -74,20 +74,18 @@ func Decode(reader io.Reader) (*TorrentInfo, error) {
 	}
 	trackers = append(trackers, tracker)
 
-	if bencodeTorrent.AnnounceList != nil {
-		for _, list := range bencodeTorrent.AnnounceList {
-			for _, tracker := range list {
-				trackerURL, err := url.Parse(tracker)
-				if err != nil {
-					return nil, fmt.Errorf(
-						"failed to parse announce-list URL %s: %w",
-						bencodeTorrent.Announce,
-						err,
-					)
-				}
-
-				trackers = append(trackers, trackerURL)
+	for _, list := range bencodeTorrent.AnnounceList {
+		for _, tracker := range list {
+			trackerURL, err := url.Parse(tracker)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"failed to parse announce-list URL %s: %w",
+					bencodeTorrent.Announce,
+					err,
+				)
 			}
+
+			trackers = append(trackers, trackerURL)
 		}
 	}
 
@@ -104,6 +102,15 @@ func Decode(reader io.Reader) (*TorrentInfo, error) {
 	files := make([]FileInfo, 0)
 	for _, bencodeFile := range bencodeTorrent.Info.Files {
 		files = append(files, FileInfo{Path: bencodeFile.Path, Length: bencodeFile.Length})
+	}
+
+	totalLength := 0
+	if len(bencodeTorrent.Info.Files) == 0 {
+		totalLength = bencodeTorrent.Info.Length
+	} else {
+		for _, file := range bencodeTorrent.Info.Files {
+			totalLength += file.Length
+		}
 	}
 
 	var marshalledInfo bytes.Buffer
@@ -139,7 +146,7 @@ func Decode(reader io.Reader) (*TorrentInfo, error) {
 		Trackers:    trackers,
 		Pieces:      pieces,
 		PieceLength: bencodeTorrent.Info.PieceLength,
-		Length:      bencodeTorrent.Info.Length,
+		TotalLength: totalLength,
 		Name:        bencodeTorrent.Info.Name,
 		Files:       files,
 		InfoHash:    info_hash,

@@ -17,6 +17,7 @@ import (
 )
 
 const connectionTimeout = time.Second * 20
+const keepAliveInterval = time.Second * 120
 const pendingPiecesQueueLength = 16
 
 type Peer struct {
@@ -40,7 +41,7 @@ type bitfield struct {
 
 func (peer *Peer) Connect(info *tracker.PeerInfo) error {
 	peer.info = *info
-	peer.chocked = true
+	peer.chocked = false
 	peer.pendingPieces = make(map[int]*pendingPiece)
 
 	conn, err := net.DialTimeout("tcp", info.IP.String()+":"+strconv.Itoa(int(info.Port)), connectionTimeout)
@@ -193,7 +194,7 @@ func (peer *Peer) requestBlocks(
 
 		// TODO: Request only pieces present on the peer.
 
-		pieceLength := min(torrent.PieceLength, torrent.Length-piece*torrent.PieceLength)
+		pieceLength := min(torrent.PieceLength, torrent.TotalLength-piece*torrent.PieceLength)
 		blockCount := (pieceLength + blockSize - 1) / blockSize
 
 		pendingPieces <- pendingPiece{
@@ -224,7 +225,7 @@ func (peer *Peer) requestBlocks(
 
 func (peer *Peer) sendKeepAlive() {
 	for {
-		time.Sleep(time.Second * 10)
+		time.Sleep(keepAliveInterval)
 
 		message := message.EncodeKeepAlive()
 

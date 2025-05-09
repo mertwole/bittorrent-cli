@@ -18,7 +18,7 @@ func Create(totalPieces int, donePieces []int) PieceScheduler {
 			continue
 		}
 
-		scheduler.remainingPieces = append(scheduler.remainingPieces, piece)
+		scheduler.remainingPieces = append([]int{piece}, scheduler.remainingPieces...)
 	}
 
 	return scheduler

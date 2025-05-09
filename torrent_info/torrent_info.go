@@ -12,7 +12,7 @@ import (
 )
 
 type TorrentInfo struct {
-	Announce    *url.URL
+	Trackers    []*url.URL
 	Pieces      [][sha1.Size]byte
 	PieceLength int
 	Length      int
@@ -26,11 +26,6 @@ type FileInfo struct {
 	Length int
 }
 
-type bencodeFileInfo struct {
-	Path   []string `bencode:"path"`
-	Length int      `bencode:"length"`
-}
-
 type bencodeInfo struct {
 	Pieces      string            `bencode:"pieces"`
 	PieceLength int               `bencode:"piece length"`
@@ -39,9 +34,29 @@ type bencodeInfo struct {
 	Files       []bencodeFileInfo `bencode:"files"`
 }
 
+type bencodeInfoSingleFile struct {
+	Pieces      string `bencode:"pieces"`
+	PieceLength int    `bencode:"piece length"`
+	Length      int    `bencode:"length"`
+	Name        string `bencode:"name"`
+}
+
+type bencodeInfoMultiFile struct {
+	Pieces      string            `bencode:"pieces"`
+	PieceLength int               `bencode:"piece length"`
+	Name        string            `bencode:"name"`
+	Files       []bencodeFileInfo `bencode:"files"`
+}
+
+type bencodeFileInfo struct {
+	Path   []string `bencode:"path"`
+	Length int      `bencode:"length"`
+}
+
 type bencodeTorrent struct {
-	Announce string      `bencode:"announce"`
-	Info     bencodeInfo `bencode:"info"`
+	Announce     string      `bencode:"announce"`
+	AnnounceList [][]string  `bencode:"announce-list"`
+	Info         bencodeInfo `bencode:"info"`
 }
 
 func Decode(reader io.Reader) (*TorrentInfo, error) {
@@ -51,9 +66,29 @@ func Decode(reader io.Reader) (*TorrentInfo, error) {
 		return nil, err
 	}
 
-	url, err := url.Parse(bencodeTorrent.Announce)
+	trackers := make([]*url.URL, 0)
+
+	tracker, err := url.Parse(bencodeTorrent.Announce)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse announce URL %s: %w", bencodeTorrent.Announce, err)
+	}
+	trackers = append(trackers, tracker)
+
+	if bencodeTorrent.AnnounceList != nil {
+		for _, list := range bencodeTorrent.AnnounceList {
+			for _, tracker := range list {
+				trackerURL, err := url.Parse(tracker)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"failed to parse announce-list URL %s: %w",
+						bencodeTorrent.Announce,
+						err,
+					)
+				}
+
+				trackers = append(trackers, trackerURL)
+			}
+		}
 	}
 
 	var pieces [][sha1.Size]byte
@@ -72,15 +107,36 @@ func Decode(reader io.Reader) (*TorrentInfo, error) {
 	}
 
 	var marshalledInfo bytes.Buffer
-	err = bencode.Marshal(&marshalledInfo, bencodeTorrent.Info)
-	if err != nil {
-		return nil, err
+	if len(files) == 0 {
+		info := bencodeInfoSingleFile{
+			Pieces:      bencodeTorrent.Info.Pieces,
+			PieceLength: bencodeTorrent.Info.PieceLength,
+			Length:      bencodeTorrent.Info.Length,
+			Name:        bencodeTorrent.Info.Name,
+		}
+
+		err = bencode.Marshal(&marshalledInfo, info)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		info := bencodeInfoMultiFile{
+			Pieces:      bencodeTorrent.Info.Pieces,
+			PieceLength: bencodeTorrent.Info.PieceLength,
+			Name:        bencodeTorrent.Info.Name,
+			Files:       bencodeTorrent.Info.Files,
+		}
+
+		err = bencode.Marshal(&marshalledInfo, info)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	info_hash := sha1.Sum(marshalledInfo.Bytes())
 
 	return &TorrentInfo{
-		Announce:    url,
+		Trackers:    trackers,
 		Pieces:      pieces,
 		PieceLength: bencodeTorrent.Info.PieceLength,
 		Length:      bencodeTorrent.Info.Length,

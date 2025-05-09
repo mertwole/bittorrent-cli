@@ -55,7 +55,7 @@ func (bitfield *bitfield) containsPiece(piece int) bool {
 
 func (peer *Peer) Connect(info *tracker.PeerInfo) error {
 	peer.info = *info
-	peer.chocked = false
+	peer.chocked = true
 	peer.pendingPieces = make(map[int]*pendingPiece)
 
 	conn, err := net.DialTimeout("tcp", info.IP.String()+":"+strconv.Itoa(int(info.Port)), connectionTimeout)
@@ -140,9 +140,6 @@ func (peer *Peer) listen(
 			// TODO
 		case message.Have:
 			havePiece := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
-
-			log.Printf("Peer %s now have piece #%d", peer.info.IP.String(), havePiece)
-
 			peer.availablePieces.addPiece(int(havePiece))
 		case message.Bitfield:
 			peer.availablePieces = &bitfield{bitfield: receivedMessage.Payload}

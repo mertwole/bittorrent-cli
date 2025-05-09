@@ -13,11 +13,10 @@ import (
 	"time"
 
 	"github.com/jackpal/bencode-go"
-	"github.com/mertwole/bittorent-cli/torrent_info"
 )
 
 const maxAnnounceResponseLength = 1024
-const udpReadTimeout = time.Second * 30
+const udpReadTimeout = time.Second * 20
 
 type TrackerResponse struct {
 	Interval int
@@ -42,26 +41,24 @@ type announceRequest struct {
 	uploaded   uint64
 }
 
-func SendRequest(torrent *torrent_info.TorrentInfo) (*TrackerResponse, error) {
-	var address = *torrent.Announce
-
+func SendRequest(announce *url.URL, infoHash [sha1.Size]byte, length int) (*TrackerResponse, error) {
 	peerID := [20]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 
 	announceRequest := announceRequest{
-		infoHash:   torrent.InfoHash,
+		infoHash:   infoHash,
 		peerID:     peerID,
 		downloaded: 0,
 		uploaded:   0,
-		left:       uint64(torrent.Length),
+		left:       uint64(length),
 	}
 
-	switch address.Scheme {
+	switch announce.Scheme {
 	case "http":
-		return sendHTTPRequest(&address, &announceRequest)
+		return sendHTTPRequest(announce, &announceRequest)
 	case "udp":
-		return sendUDPRequest(&address, &announceRequest)
+		return sendUDPRequest(announce, &announceRequest)
 	default:
-		return nil, fmt.Errorf("unsupported tracker scheme: %s", address.Scheme)
+		return nil, fmt.Errorf("unsupported tracker scheme: %s", announce.Scheme)
 	}
 }
 
@@ -69,7 +66,7 @@ func sendHTTPRequest(
 	address *url.URL,
 	announceRequest *announceRequest,
 ) (*TrackerResponse, error) {
-	Port := 6881
+	Port := 6882
 
 	address.RawQuery = url.Values{
 		"info_hash":  []string{string(announceRequest.infoHash[:])},
@@ -209,7 +206,7 @@ func sendUDPAnnounceRequest(
 	connectionID uint64,
 	announceRequest *announceRequest,
 ) (*TrackerResponse, error) {
-	var port uint16 = 6881
+	var port uint16 = 6889
 	var key uint32 = 0xAABBCCDD
 
 	// Offset  Size    			Name    		Value

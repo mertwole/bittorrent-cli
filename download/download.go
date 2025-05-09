@@ -52,7 +52,7 @@ type downloadedFile struct {
 func newDownloadedFiles(torrent *torrent_info.TorrentInfo, targetFolder string) *downloadedFiles {
 	downloadedFiles := downloadedFiles{pieceLength: torrent.PieceLength, pieceHashes: torrent.Pieces}
 
-	if torrent.Files == nil {
+	if len(torrent.Files) == 0 {
 		path := filepath.Join(targetFolder, torrent.Name)
 		downloadedFiles.files = []downloadedFile{{path: path, length: torrent.Length}}
 
@@ -141,7 +141,31 @@ func (files *downloadedFiles) readPiece(piece int) (*[]byte, error) {
 }
 
 func (files *downloadedFiles) writePiece(offset int, data *[]byte) error {
+<<<<<<< Updated upstream
 	// TODO
+=======
+	currentOffset := 0
+	bytesWritten := 0
+	for _, file := range files.files {
+		if file.length+currentOffset > offset {
+			bytesToWrite := min(len(*data)-bytesWritten, file.length+currentOffset-offset)
+
+			writeOffset := int64(max(0, offset-currentOffset))
+
+			_, err := file.handle.WriteAt((*data)[bytesWritten:bytesWritten+bytesToWrite], writeOffset)
+			if err != nil {
+				return fmt.Errorf("failed to write to file %s: %w", file.path, err)
+			}
+
+			bytesWritten += bytesToWrite
+			if bytesWritten >= len(*data) {
+				break
+			}
+		}
+
+		currentOffset += file.length
+	}
+>>>>>>> Stashed changes
 
 	return nil
 }

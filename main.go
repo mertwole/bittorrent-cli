@@ -13,7 +13,7 @@ import (
 	"github.com/mertwole/bittorent-cli/tracker"
 )
 
-const maxConnections = 8
+const maxConnections = 4
 
 var torrentFileName = flag.String("torrent", "./data/torrent.torrent", "Path to the .torrent file")
 var downloadFolderName = flag.String("download", "./data", "Path to the download folder")
@@ -41,20 +41,21 @@ func main() {
 	pieceScheduler := piece_scheduler.Create(len(torrentInfo.Pieces), donePieces)
 	requestedPiecesChannel := pieceScheduler.Start()
 
-	trackerResponse, err := tracker.SendRequest(torrentInfo)
-	if err != nil {
-		log.Fatal("Failed to send request to the tracker: ", err)
-	}
+	peersInfo := make([]tracker.PeerInfo, 0)
+	for _, trackerURL := range torrentInfo.Trackers {
+		trackerResponse, err := tracker.SendRequest(trackerURL, torrentInfo.InfoHash, torrentInfo.Length)
+		if err != nil {
+			log.Printf("Failed to send request to the tracker: %v", err)
+			continue
+		}
 
-	log.Printf("Discovered %d peers", len(trackerResponse.Peers))
+		log.Printf("Discovered %d peers: %v", len(trackerResponse.Peers), trackerResponse.Peers)
 
-	if len(trackerResponse.Peers) == 0 {
-		return
+		peersInfo = append(peersInfo, trackerResponse.Peers[:]...)
 	}
 
 	peers := make([]peer.Peer, 0)
-
-	for _, peerInfo := range trackerResponse.Peers {
+	for _, peerInfo := range peersInfo {
 		peer := peer.Peer{}
 		err = peer.Connect(&peerInfo)
 		if err != nil {

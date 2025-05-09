@@ -13,8 +13,6 @@ import (
 	"github.com/mertwole/bittorent-cli/tracker"
 )
 
-const maxConnections = 8
-
 var torrentFileName = flag.String("torrent", "./data/torrent.torrent", "Path to the .torrent file")
 var downloadFolderName = flag.String("download", "./data", "Path to the download folder")
 
@@ -54,36 +52,38 @@ func main() {
 		peersInfo = append(peersInfo, trackerResponse.Peers[:]...)
 	}
 
-	peers := make([]peer.Peer, 0)
 	for _, peerInfo := range peersInfo {
-		peer := peer.Peer{}
-		err = peer.Connect(&peerInfo)
-		if err != nil {
-			log.Printf("Failed to connect to the peer: %v", err)
-			continue
-		}
-
-		err = peer.Handshake(torrentInfo)
-		if err != nil {
-			log.Printf("Failed to handshake with the peer: %v", err)
-			continue
-		}
-
-		log.Printf("connected to the peer %+v", peerInfo)
-
-		err = peer.StartDownload(torrentInfo, requestedPiecesChannel, downloadedPiecesChannel)
-		if err != nil {
-			log.Fatal("Failed to start downloading data from peer: ", err)
-		}
-
-		peers = append(peers, peer)
-
-		if len(peers) >= maxConnections {
-			break
-		}
+		go downloadFromPeer(&peerInfo, torrentInfo, requestedPiecesChannel, downloadedPiecesChannel)
 	}
 
 	for {
 		time.Sleep(time.Millisecond * 100)
+	}
+}
+
+func downloadFromPeer(
+	peerInfo *tracker.PeerInfo,
+	torrentInfo *torrent_info.TorrentInfo,
+	requestedPiecesChannel chan int,
+	downloadedPiecesChannel chan<- download.DownloadedPiece,
+) {
+	peer := peer.Peer{}
+	err := peer.Connect(peerInfo)
+	if err != nil {
+		log.Printf("Failed to connect to the peer: %v", err)
+		return
+	}
+
+	err = peer.Handshake(torrentInfo)
+	if err != nil {
+		log.Printf("Failed to handshake with the peer: %v", err)
+		return
+	}
+
+	log.Printf("connected to the peer %+v", peerInfo)
+
+	err = peer.StartDownload(torrentInfo, requestedPiecesChannel, downloadedPiecesChannel)
+	if err != nil {
+		log.Fatal("Failed to start downloading data from peer: ", err)
 	}
 }

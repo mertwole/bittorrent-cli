@@ -4,7 +4,7 @@ import (
 	"slices"
 )
 
-const channelCapacity = 128
+const channelCapacity = 4096
 
 type PieceScheduler struct {
 	remainingPieces []int
@@ -18,7 +18,7 @@ func Create(totalPieces int, donePieces []int) PieceScheduler {
 			continue
 		}
 
-		scheduler.remainingPieces = append([]int{piece}, scheduler.remainingPieces...)
+		scheduler.remainingPieces = append(scheduler.remainingPieces, piece)
 	}
 
 	return scheduler

@@ -16,7 +16,7 @@ import (
 )
 
 const maxAnnounceResponseLength = 1024
-const udpReadTimeout = time.Second * 20
+const udpReadTimeout = time.Second * 5
 
 type TrackerResponse struct {
 	Interval int

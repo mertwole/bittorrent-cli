@@ -135,15 +135,38 @@ func (files *downloadedFiles) scanDonePieces() ([]int, error) {
 }
 
 func (files *downloadedFiles) readPiece(piece int) (*[]byte, error) {
-	// TODO
+	offset := piece * files.pieceLength
 
-	return nil, nil
+	currentOffset := 0
+	bytesRead := 0
+	readData := make([]byte, 0)
+
+	for _, file := range files.files {
+		if file.length+currentOffset > offset {
+			bytesToRead := min(files.pieceLength-bytesRead, file.length+currentOffset-offset)
+			readBytes := make([]byte, bytesToRead)
+
+			readOffset := int64(max(0, offset-currentOffset))
+
+			_, err := file.handle.ReadAt(readBytes, readOffset)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read from file %s: %w", file.path, err)
+			}
+			readData = append(readData, readBytes...)
+
+			bytesRead += bytesToRead
+			if bytesRead >= files.pieceLength {
+				break
+			}
+		}
+
+		currentOffset += file.length
+	}
+
+	return &readData, nil
 }
 
 func (files *downloadedFiles) writePiece(offset int, data *[]byte) error {
-<<<<<<< Updated upstream
-	// TODO
-=======
 	currentOffset := 0
 	bytesWritten := 0
 	for _, file := range files.files {
@@ -165,7 +188,6 @@ func (files *downloadedFiles) writePiece(offset int, data *[]byte) error {
 
 		currentOffset += file.length
 	}
->>>>>>> Stashed changes
 
 	return nil
 }

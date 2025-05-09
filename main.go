@@ -13,7 +13,7 @@ import (
 	"github.com/mertwole/bittorent-cli/tracker"
 )
 
-const maxConnections = 4
+const maxConnections = 8
 
 var torrentFileName = flag.String("torrent", "./data/torrent.torrent", "Path to the .torrent file")
 var downloadFolderName = flag.String("download", "./data", "Path to the download folder")

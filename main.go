@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"flag"
 	"log"
 	"os"
@@ -39,7 +40,7 @@ func main() {
 	pieceScheduler := piece_scheduler.Create(len(torrentInfo.Pieces), donePieces)
 	requestedPiecesChannel := pieceScheduler.Start()
 
-	peersInfo := make([]tracker.PeerInfo, 0)
+	peersInfo := make(map[uint32]tracker.PeerInfo, 0)
 	for _, trackerURL := range torrentInfo.Trackers {
 		trackerResponse, err := tracker.SendRequest(trackerURL, torrentInfo.InfoHash, torrentInfo.TotalLength)
 		if err != nil {
@@ -47,10 +48,12 @@ func main() {
 			continue
 		}
 
-		log.Printf("Discovered %d peers: %v", len(trackerResponse.Peers), trackerResponse.Peers)
-
-		peersInfo = append(peersInfo, trackerResponse.Peers[:]...)
+		for _, newPeer := range trackerResponse.Peers {
+			peersInfo[binary.BigEndian.Uint32(newPeer.IP)] = newPeer
+		}
 	}
+
+	log.Printf("discovered %d peers", len(peersInfo))
 
 	for _, peerInfo := range peersInfo {
 		go downloadFromPeer(&peerInfo, torrentInfo, requestedPiecesChannel, downloadedPiecesChannel)

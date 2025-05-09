@@ -16,7 +16,7 @@ import (
 	"github.com/mertwole/bittorent-cli/tracker"
 )
 
-const connectionTimeout = time.Second * 20
+const connectionTimeout = time.Second * 120
 const keepAliveInterval = time.Second * 120
 const pendingPiecesQueueLength = 16
 

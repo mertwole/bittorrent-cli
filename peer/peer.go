@@ -16,13 +16,14 @@ import (
 	"github.com/mertwole/bittorent-cli/tracker"
 )
 
-const connectionTimeout = time.Second * 20
+const connectionTimeout = time.Second * 120
+const keepAliveInterval = time.Second * 120
 const pendingPiecesQueueLength = 16
 
 type Peer struct {
 	info            tracker.PeerInfo
 	connection      net.Conn
-	availablePieces bitfield
+	availablePieces *bitfield
 	chocked         bool
 	pendingPieces   map[int]*pendingPiece // TODO: check for stale pending pieces and retry download.
 }
@@ -36,6 +37,20 @@ type pendingPiece struct {
 
 type bitfield struct {
 	bitfield []byte
+}
+
+func (bitfield *bitfield) addPiece(piece int) {
+	byteIdx := piece / 8
+	bitIdx := piece % 8
+
+	bitfield.bitfield[byteIdx] |= 1 << (7 - bitIdx)
+}
+
+func (bitfield *bitfield) containsPiece(piece int) bool {
+	byteIdx := piece / 8
+	bitIdx := piece % 8
+
+	return bitfield.bitfield[byteIdx]&(1<<(7-bitIdx)) != 0
 }
 
 func (peer *Peer) Connect(info *tracker.PeerInfo) error {
@@ -106,7 +121,7 @@ func (peer *Peer) listen(
 		receivedMessage, err := message.Decode(peer.connection)
 		if err != nil {
 			log.Printf("failed to decode message from peer %+v: %v", peer.info, err)
-			continue
+			break
 		}
 
 		if receivedMessage == nil {
@@ -124,9 +139,10 @@ func (peer *Peer) listen(
 		case message.NotInterested:
 			// TODO
 		case message.Have:
-			// TODO: Write bit to the bitfield
+			havePiece := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
+			peer.availablePieces.addPiece(int(havePiece))
 		case message.Bitfield:
-			peer.availablePieces = bitfield{bitfield: receivedMessage.Payload}
+			peer.availablePieces = &bitfield{bitfield: receivedMessage.Payload}
 		case message.Request:
 			// TODO
 		case message.Piece:
@@ -191,10 +207,15 @@ func (peer *Peer) requestBlocks(
 			break
 		}
 
-		// TODO: Request only pieces present on the peer.
+		if peer.availablePieces == nil || !peer.availablePieces.containsPiece(piece) {
+			requestedPieces <- piece
+			continue
+		}
 
-		pieceLength := min(torrent.PieceLength, torrent.Length-piece*torrent.PieceLength)
+		pieceLength := min(torrent.PieceLength, torrent.TotalLength-piece*torrent.PieceLength)
 		blockCount := (pieceLength + blockSize - 1) / blockSize
+
+		log.Printf("requesting piece #%d", piece)
 
 		pendingPieces <- pendingPiece{
 			idx:            piece,
@@ -224,7 +245,7 @@ func (peer *Peer) requestBlocks(
 
 func (peer *Peer) sendKeepAlive() {
 	for {
-		time.Sleep(time.Second * 10)
+		time.Sleep(keepAliveInterval)
 
 		message := message.EncodeKeepAlive()
 

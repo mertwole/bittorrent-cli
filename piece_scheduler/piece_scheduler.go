@@ -4,7 +4,7 @@ import (
 	"slices"
 )
 
-const channelCapacity = 128
+const channelCapacity = 4096
 
 type PieceScheduler struct {
 	remainingPieces []int

@@ -54,7 +54,7 @@ func newDownloadedFiles(torrent *torrent_info.TorrentInfo, targetFolder string) 
 
 	if len(torrent.Files) == 0 {
 		path := filepath.Join(targetFolder, torrent.Name)
-		downloadedFiles.files = []downloadedFile{{path: path, length: torrent.Length}}
+		downloadedFiles.files = []downloadedFile{{path: path, length: torrent.TotalLength}}
 
 		return &downloadedFiles
 	}

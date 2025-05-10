@@ -127,6 +127,7 @@ func (peer *Peer) listen(
 	for {
 		receivedMessage, err := message.Decode(peer.connection)
 		if err != nil {
+			// TODO: Reconnect in this case.
 			log.Printf("failed to decode message from peer %+v: %v", peer.info, err)
 			break
 		}
@@ -245,6 +246,7 @@ func (peer *Peer) requestBlocks(
 				request := (&message.Message{ID: message.Request, Payload: messagePayload}).Encode()
 				_, err := peer.connection.Write(request)
 				if err != nil {
+					// TODO: Reconnect in this case.
 					log.Printf("error sending piece request: %v", err)
 				}
 			}
@@ -260,6 +262,7 @@ func (peer *Peer) sendKeepAlive() {
 
 		_, err := peer.connection.Write(message)
 		if err != nil {
+			// TODO: Reconnect in this case.
 			log.Printf("error sending keep-alive message: %v", err)
 		}
 

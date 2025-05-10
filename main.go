@@ -7,7 +7,7 @@ import (
 
 	"github.com/mertwole/bittorent-cli/download"
 	"github.com/mertwole/bittorent-cli/peer"
-	"github.com/mertwole/bittorent-cli/piece_scheduler"
+	"github.com/mertwole/bittorent-cli/pieces"
 	"github.com/mertwole/bittorent-cli/torrent_info"
 	"github.com/mertwole/bittorent-cli/tracker"
 )
@@ -37,8 +37,7 @@ func main() {
 
 	log.Printf("Discovered %d already downloaded pieces", len(donePieces))
 
-	pieceScheduler := piece_scheduler.Create(len(torrentInfo.Pieces), donePieces)
-	requestedPiecesChannel := pieceScheduler.Start()
+	pieces := pieces.NewPieces(torrentInfo.TotalLength/torrentInfo.PieceLength, &donePieces)
 
 	peerID := [20]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 
@@ -62,7 +61,7 @@ func main() {
 
 		if !alreadyKnown {
 			knownPeers = append(knownPeers, newPeer)
-			go downloadFromPeer(&newPeer, torrentInfo, requestedPiecesChannel, downloadedPiecesChannel)
+			go downloadFromPeer(&newPeer, torrentInfo, pieces, downloadedPiecesChannel)
 		}
 	}
 }
@@ -70,7 +69,7 @@ func main() {
 func downloadFromPeer(
 	peerInfo *tracker.PeerInfo,
 	torrentInfo *torrent_info.TorrentInfo,
-	requestedPiecesChannel chan int,
+	pieces *pieces.Pieces,
 	downloadedPiecesChannel chan<- download.DownloadedPiece,
 ) {
 	peer := peer.Peer{}
@@ -88,7 +87,7 @@ func downloadFromPeer(
 
 	log.Printf("connected to the peer %+v", peerInfo)
 
-	err = peer.StartDownload(torrentInfo, requestedPiecesChannel, downloadedPiecesChannel)
+	err = peer.StartDownload(torrentInfo, pieces, downloadedPiecesChannel)
 	if err != nil {
 		log.Fatal("Failed to start downloading data from peer: ", err)
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/mertwole/bittorent-cli/download"
 	"github.com/mertwole/bittorent-cli/peer/message"
+	"github.com/mertwole/bittorent-cli/pieces"
 	"github.com/mertwole/bittorent-cli/torrent_info"
 	"github.com/mertwole/bittorent-cli/tracker"
 )
@@ -23,8 +24,9 @@ const pendingPiecesQueueLength = 16
 type Peer struct {
 	info            tracker.PeerInfo
 	connection      net.Conn
-	availablePieces *bitfield
+	availablePieces *bitfield // TODO: Mutex
 	chocked         bool
+	pieces          *pieces.Pieces
 	pendingPieces   map[int]*pendingPiece // TODO: check for stale pending pieces and retry download.
 }
 
@@ -60,7 +62,6 @@ func (peer *Peer) GetInfo() tracker.PeerInfo {
 func (peer *Peer) Connect(info *tracker.PeerInfo) error {
 	peer.info = *info
 	peer.chocked = true
-	peer.pendingPieces = make(map[int]*pendingPiece)
 
 	conn, err := net.DialTimeout("tcp", info.IP.String()+":"+strconv.Itoa(int(info.Port)), connectionTimeout)
 	if err != nil {
@@ -103,14 +104,16 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 
 func (peer *Peer) StartDownload(
 	torrent *torrent_info.TorrentInfo,
-	requestedPieces chan int,
+	pieces *pieces.Pieces,
 	downloadedPieces chan<- download.DownloadedPiece,
 ) error {
+	peer.pieces = pieces
+
 	go peer.sendKeepAlive()
 
-	pendingPieces := make(chan pendingPiece, pendingPiecesQueueLength)
+	pendingPieces := make(chan pendingPiece)
 
-	go peer.requestBlocks(torrent, requestedPieces, pendingPieces)
+	go peer.requestBlocks(torrent, pendingPieces)
 	go peer.listen(torrent, downloadedPieces, pendingPieces)
 
 	return nil
@@ -150,13 +153,15 @@ func (peer *Peer) listen(
 		case message.Request:
 			// TODO
 		case message.Piece:
-		Outer:
-			for {
-				select {
-				case newPendingPiece := <-pendingPieces:
-					peer.pendingPieces[newPendingPiece.idx] = &newPendingPiece
-				default:
-					break Outer
+			if len(peer.pendingPieces) < pendingPiecesQueueLength {
+			Outer:
+				for {
+					select {
+					case newPendingPiece := <-pendingPieces:
+						peer.pendingPieces[newPendingPiece.idx] = &newPendingPiece
+					default:
+						break Outer
+					}
 				}
 			}
 
@@ -165,14 +170,15 @@ func (peer *Peer) listen(
 
 			pendingPiece, ok := peer.pendingPieces[int(index)]
 			if !ok {
-				log.Fatalf("unexpected piece #%d received", index)
+				log.Printf("unexpected piece #%d received", index)
+				continue
 			}
 
 			copy(pendingPiece.data[begin:], receivedMessage.Payload[8:])
 			pendingPiece.blocksReceived++
 
 			if pendingPiece.blocksReceived == pendingPiece.totalBlocks {
-				log.Printf("received piece. #%d", index)
+				log.Printf("received piece #%d", index)
 
 				sha1 := sha1.Sum(pendingPiece.data)
 				if torrent.Pieces[index] != sha1 {
@@ -181,10 +187,18 @@ func (peer *Peer) listen(
 						hex.EncodeToString(torrent.Pieces[index][:]),
 						hex.EncodeToString(sha1[:]),
 					)
-				}
+				} else {
+					globalOffset := int(index) * torrent.PieceLength
+					downloadedPieces <- download.DownloadedPiece{Offset: globalOffset, Data: pendingPiece.data}
 
-				globalOffset := int(index) * torrent.PieceLength
-				downloadedPieces <- download.DownloadedPiece{Offset: globalOffset, Data: pendingPiece.data}
+					if !peer.pieces.CheckStateAndChange(int(index), pieces.Pending, pieces.Downloaded) {
+						log.Panicf(
+							"Piece is in unexpected state. Expected %v, got %v",
+							pieces.Pending,
+							peer.pieces.GetState(int(index)),
+						)
+					}
+				}
 			}
 		case message.Cancel:
 			// TODO
@@ -196,7 +210,6 @@ const blockSize = 1 << 14
 
 func (peer *Peer) requestBlocks(
 	torrent *torrent_info.TorrentInfo,
-	requestedPieces chan int,
 	pendingPieces chan<- pendingPiece,
 ) {
 	for {
@@ -205,44 +218,41 @@ func (peer *Peer) requestBlocks(
 			continue
 		}
 
-		piece, ok := <-requestedPieces
-		if !ok {
-			// TODO: Exit only when there're no pending pieces
-			break
-		}
-
-		if peer.availablePieces == nil || !peer.availablePieces.containsPiece(piece) {
-			requestedPieces <- piece
-			continue
-		}
-
-		pieceLength := min(torrent.PieceLength, torrent.TotalLength-piece*torrent.PieceLength)
-		blockCount := (pieceLength + blockSize - 1) / blockSize
-
-		log.Printf("requesting piece #%d", piece)
-
-		pendingPieces <- pendingPiece{
-			idx:            piece,
-			data:           make([]byte, pieceLength),
-			totalBlocks:    blockCount,
-			blocksReceived: 0,
-		}
-
-		for block := range blockCount {
-			length := min(blockSize, pieceLength-block*blockSize)
-
-			messagePayload := make([]byte, 12)
-			binary.BigEndian.PutUint32(messagePayload[:4], uint32(piece))            // index
-			binary.BigEndian.PutUint32(messagePayload[4:8], uint32(block*blockSize)) // begin
-			binary.BigEndian.PutUint32(messagePayload[8:12], uint32(length))         // length
-
-			request := (&message.Message{ID: message.Request, Payload: messagePayload}).Encode()
-			_, err := peer.connection.Write(request)
-			if err != nil {
-				log.Printf("error sending piece request: %v", err)
+		for pieceIdx := range len(torrent.Pieces) {
+			if peer.availablePieces == nil || !peer.availablePieces.containsPiece(pieceIdx) {
+				continue
 			}
 
-			time.Sleep(time.Millisecond * 100)
+			if !peer.pieces.CheckStateAndChange(pieceIdx, pieces.NotDownloaded, pieces.Pending) {
+				continue
+			}
+
+			pieceLength := min(torrent.PieceLength, torrent.TotalLength-pieceIdx*torrent.PieceLength)
+			blockCount := (pieceLength + blockSize - 1) / blockSize
+
+			log.Printf("requesting piece #%d", pieceIdx)
+
+			pendingPieces <- pendingPiece{
+				idx:            pieceIdx,
+				data:           make([]byte, pieceLength),
+				totalBlocks:    blockCount,
+				blocksReceived: 0,
+			}
+
+			for block := range blockCount {
+				length := min(blockSize, pieceLength-block*blockSize)
+
+				messagePayload := make([]byte, 12)
+				binary.BigEndian.PutUint32(messagePayload[:4], uint32(pieceIdx))         // index
+				binary.BigEndian.PutUint32(messagePayload[4:8], uint32(block*blockSize)) // begin
+				binary.BigEndian.PutUint32(messagePayload[8:12], uint32(length))         // length
+
+				request := (&message.Message{ID: message.Request, Payload: messagePayload}).Encode()
+				_, err := peer.connection.Write(request)
+				if err != nil {
+					log.Printf("error sending piece request: %v", err)
+				}
+			}
 		}
 	}
 }

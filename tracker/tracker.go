@@ -67,6 +67,11 @@ func (tracker *Tracker) ListenForPeers(peers chan<- PeerInfo) {
 		response, err := tracker.sendRequest()
 		if err != nil {
 			log.Printf("error sending request to the tracker: %v", err)
+
+			if tracker.interval == 0 {
+				tracker.interval = time.Second * 60
+			}
+
 			continue
 		}
 

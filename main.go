@@ -37,7 +37,7 @@ func main() {
 
 	log.Printf("Discovered %d already downloaded pieces", len(donePieces))
 
-	pieces := pieces.NewPieces(torrentInfo.TotalLength/torrentInfo.PieceLength, &donePieces)
+	pieces := pieces.NewPieces(len(torrentInfo.Pieces), &donePieces)
 
 	peerID := [20]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 

@@ -19,7 +19,7 @@ import (
 
 const connectionTimeout = time.Second * 120
 const keepAliveInterval = time.Second * 120
-const pendingPiecesQueueLength = 16
+const pendingPiecesQueueLength = 3
 
 type Peer struct {
 	info            tracker.PeerInfo
@@ -27,7 +27,9 @@ type Peer struct {
 	availablePieces *bitfield // TODO: Mutex
 	chocked         bool
 	pieces          *pieces.Pieces
-	pendingPieces   map[int]*pendingPiece // TODO: check for stale pending pieces and retry download.
+	// TODO: Mutex
+	// TODO: check for stale pending pieces and retry download
+	pendingPieces map[int]*pendingPiece
 }
 
 type pendingPiece struct {
@@ -108,13 +110,12 @@ func (peer *Peer) StartDownload(
 	downloadedPieces chan<- download.DownloadedPiece,
 ) error {
 	peer.pieces = pieces
+	peer.pendingPieces = make(map[int]*pendingPiece)
 
 	go peer.sendKeepAlive()
 
-	pendingPieces := make(chan pendingPiece)
-
-	go peer.requestBlocks(torrent, pendingPieces)
-	go peer.listen(torrent, downloadedPieces, pendingPieces)
+	go peer.requestBlocks(torrent)
+	go peer.listen(torrent, downloadedPieces)
 
 	return nil
 }
@@ -122,7 +123,6 @@ func (peer *Peer) StartDownload(
 func (peer *Peer) listen(
 	torrent *torrent_info.TorrentInfo,
 	downloadedPieces chan<- download.DownloadedPiece,
-	pendingPieces <-chan pendingPiece,
 ) {
 	for {
 		receivedMessage, err := message.Decode(peer.connection)
@@ -153,18 +153,6 @@ func (peer *Peer) listen(
 		case message.Request:
 			// TODO
 		case message.Piece:
-			if len(peer.pendingPieces) < pendingPiecesQueueLength {
-			Outer:
-				for {
-					select {
-					case newPendingPiece := <-pendingPieces:
-						peer.pendingPieces[newPendingPiece.idx] = &newPendingPiece
-					default:
-						break Outer
-					}
-				}
-			}
-
 			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
 			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
 
@@ -182,7 +170,8 @@ func (peer *Peer) listen(
 
 				sha1 := sha1.Sum(pendingPiece.data)
 				if torrent.Pieces[index] != sha1 {
-					log.Printf(
+					// TODO: Gracefully process this case
+					log.Fatalf(
 						"received piece with invalid hash: expected %s, got %s",
 						hex.EncodeToString(torrent.Pieces[index][:]),
 						hex.EncodeToString(sha1[:]),
@@ -198,6 +187,8 @@ func (peer *Peer) listen(
 							peer.pieces.GetState(int(index)),
 						)
 					}
+
+					delete(peer.pendingPieces, int(index))
 				}
 			}
 		case message.Cancel:
@@ -210,7 +201,6 @@ const blockSize = 1 << 14
 
 func (peer *Peer) requestBlocks(
 	torrent *torrent_info.TorrentInfo,
-	pendingPieces chan<- pendingPiece,
 ) {
 	for {
 		if peer.chocked {
@@ -227,12 +217,17 @@ func (peer *Peer) requestBlocks(
 				continue
 			}
 
-			pieceLength := min(torrent.PieceLength, torrent.TotalLength-pieceIdx*torrent.PieceLength)
-			blockCount := (pieceLength + blockSize - 1) / blockSize
+			if len(peer.pendingPieces) >= pendingPiecesQueueLength {
+				time.Sleep(time.Millisecond * 100)
+				continue
+			}
 
 			log.Printf("requesting piece #%d", pieceIdx)
 
-			pendingPieces <- pendingPiece{
+			pieceLength := min(torrent.PieceLength, torrent.TotalLength-pieceIdx*torrent.PieceLength)
+			blockCount := (pieceLength + blockSize - 1) / blockSize
+
+			peer.pendingPieces[pieceIdx] = &pendingPiece{
 				idx:            pieceIdx,
 				data:           make([]byte, pieceLength),
 				totalBlocks:    blockCount,

@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -41,24 +42,64 @@ type announceRequest struct {
 	uploaded   uint64
 }
 
-func SendRequest(announce *url.URL, infoHash [sha1.Size]byte, length int) (*TrackerResponse, error) {
+type Tracker struct {
+	url      *url.URL
+	infoHash [sha1.Size]byte
+	length   int
+	peerID   [20]byte
+	interval time.Duration
+}
+
+func NewTracker(url *url.URL, infoHash [sha1.Size]byte, length int, peerID [20]byte) *Tracker {
+	return &Tracker{
+		url:      url,
+		infoHash: infoHash,
+		length:   length,
+		peerID:   peerID,
+		interval: time.Second * 0,
+	}
+}
+
+func (tracker *Tracker) ListenForPeers(peers chan<- PeerInfo) {
+	for {
+		time.Sleep(tracker.interval)
+
+		response, err := tracker.sendRequest()
+		if err != nil {
+			log.Printf("error sending request to the tracker: %v", err)
+
+			if tracker.interval == 0 {
+				tracker.interval = time.Second * 60
+			}
+
+			continue
+		}
+
+		tracker.interval = time.Second * time.Duration(response.Interval)
+		for _, peer := range response.Peers {
+			peers <- peer
+		}
+	}
+}
+
+func (tracker *Tracker) sendRequest() (*TrackerResponse, error) {
 	peerID := [20]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 
 	announceRequest := announceRequest{
-		infoHash:   infoHash,
+		infoHash:   tracker.infoHash,
 		peerID:     peerID,
 		downloaded: 0,
 		uploaded:   0,
-		left:       uint64(length),
+		left:       uint64(tracker.length),
 	}
 
-	switch announce.Scheme {
+	switch tracker.url.Scheme {
 	case "http":
-		return sendHTTPRequest(announce, &announceRequest)
+		return sendHTTPRequest(tracker.url, &announceRequest)
 	case "udp":
-		return sendUDPRequest(announce, &announceRequest)
+		return sendUDPRequest(tracker.url, &announceRequest)
 	default:
-		return nil, fmt.Errorf("unsupported tracker scheme: %s", announce.Scheme)
+		return nil, fmt.Errorf("unsupported tracker scheme: %s", tracker.url.Scheme)
 	}
 }
 

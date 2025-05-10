@@ -1,11 +1,9 @@
 package main
 
 import (
-	"encoding/binary"
 	"flag"
 	"log"
 	"os"
-	"time"
 
 	"github.com/mertwole/bittorent-cli/download"
 	"github.com/mertwole/bittorent-cli/peer"
@@ -13,6 +11,8 @@ import (
 	"github.com/mertwole/bittorent-cli/torrent_info"
 	"github.com/mertwole/bittorent-cli/tracker"
 )
+
+const discoveredPeersQueueSize = 16
 
 var torrentFileName = flag.String("torrent", "./data/torrent.torrent", "Path to the .torrent file")
 var downloadFolderName = flag.String("download", "./data", "Path to the download folder")
@@ -40,27 +40,30 @@ func main() {
 	pieceScheduler := piece_scheduler.Create(len(torrentInfo.Pieces), donePieces)
 	requestedPiecesChannel := pieceScheduler.Start()
 
-	peersInfo := make(map[uint32]tracker.PeerInfo, 0)
+	peerID := [20]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+	discoveredPeers := make(chan tracker.PeerInfo, discoveredPeersQueueSize)
+
 	for _, trackerURL := range torrentInfo.Trackers {
-		trackerResponse, err := tracker.SendRequest(trackerURL, torrentInfo.InfoHash, torrentInfo.TotalLength)
-		if err != nil {
-			log.Printf("Failed to send request to the tracker: %v", err)
-			continue
-		}
-
-		for _, newPeer := range trackerResponse.Peers {
-			peersInfo[binary.BigEndian.Uint32(newPeer.IP)] = newPeer
-		}
+		tracker := tracker.NewTracker(trackerURL, torrentInfo.InfoHash, torrentInfo.TotalLength, peerID)
+		go tracker.ListenForPeers(discoveredPeers)
 	}
 
-	log.Printf("discovered %d peers", len(peersInfo))
-
-	for _, peerInfo := range peersInfo {
-		go downloadFromPeer(&peerInfo, torrentInfo, requestedPiecesChannel, downloadedPiecesChannel)
-	}
-
+	knownPeers := make([]tracker.PeerInfo, 0)
 	for {
-		time.Sleep(time.Millisecond * 100)
+		newPeer := <-discoveredPeers
+		alreadyKnown := false
+		for _, peer := range knownPeers {
+			if peer.IP.Equal(newPeer.IP) {
+				alreadyKnown = true
+				break
+			}
+		}
+
+		if !alreadyKnown {
+			knownPeers = append(knownPeers, newPeer)
+			go downloadFromPeer(&newPeer, torrentInfo, requestedPiecesChannel, downloadedPiecesChannel)
+		}
 	}
 }
 

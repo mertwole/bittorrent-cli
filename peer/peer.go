@@ -53,6 +53,10 @@ func (bitfield *bitfield) containsPiece(piece int) bool {
 	return bitfield.bitfield[byteIdx]&(1<<(7-bitIdx)) != 0
 }
 
+func (peer *Peer) GetInfo() tracker.PeerInfo {
+	return peer.info
+}
+
 func (peer *Peer) Connect(info *tracker.PeerInfo) error {
 	peer.info = *info
 	peer.chocked = true

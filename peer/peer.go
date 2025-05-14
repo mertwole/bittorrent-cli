@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/mertwole/bittorent-cli/download"
@@ -25,7 +26,7 @@ const pieceRequestTimeout = time.Second * 20
 type Peer struct {
 	info            tracker.PeerInfo
 	connection      net.Conn
-	availablePieces *bitfield // TODO: Mutex
+	availablePieces *bitfield
 	chocked         bool
 	pieces          *pieces.Pieces
 	// TODO: Mutex
@@ -42,20 +43,27 @@ type pendingPiece struct {
 
 type bitfield struct {
 	bitfield []byte
+	mutex    sync.RWMutex
 }
 
 func (bitfield *bitfield) addPiece(piece int) {
 	byteIdx := piece / 8
 	bitIdx := piece % 8
 
+	bitfield.mutex.Lock()
 	bitfield.bitfield[byteIdx] |= 1 << (7 - bitIdx)
+	bitfield.mutex.Unlock()
 }
 
 func (bitfield *bitfield) containsPiece(piece int) bool {
 	byteIdx := piece / 8
 	bitIdx := piece % 8
 
-	return bitfield.bitfield[byteIdx]&(1<<(7-bitIdx)) != 0
+	bitfield.mutex.RLock()
+	result := bitfield.bitfield[byteIdx]&(1<<(7-bitIdx)) != 0
+	bitfield.mutex.RUnlock()
+
+	return result
 }
 
 func (peer *Peer) GetInfo() tracker.PeerInfo {

@@ -19,7 +19,7 @@ import (
 
 const connectionTimeout = time.Second * 120
 const keepAliveInterval = time.Second * 120
-const pendingPiecesQueueLength = 3
+const pendingPiecesQueueLength = 16
 const pieceRequestTimeout = time.Second * 20
 
 type Peer struct {
@@ -216,12 +216,12 @@ func (peer *Peer) requestBlocks(
 				continue
 			}
 
-			if !peer.pieces.CheckStateAndChange(pieceIdx, pieces.NotDownloaded, pieces.Pending) {
+			if len(peer.pendingPieces) >= pendingPiecesQueueLength {
+				time.Sleep(time.Millisecond * 100)
 				continue
 			}
 
-			if len(peer.pendingPieces) >= pendingPiecesQueueLength {
-				time.Sleep(time.Millisecond * 100)
+			if !peer.pieces.CheckStateAndChange(pieceIdx, pieces.NotDownloaded, pieces.Pending) {
 				continue
 			}
 

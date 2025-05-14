@@ -20,6 +20,7 @@ import (
 const connectionTimeout = time.Second * 120
 const keepAliveInterval = time.Second * 120
 const pendingPiecesQueueLength = 3
+const pieceRequestTimeout = time.Second * 20
 
 type Peer struct {
 	info            tracker.PeerInfo
@@ -28,7 +29,6 @@ type Peer struct {
 	chocked         bool
 	pieces          *pieces.Pieces
 	// TODO: Mutex
-	// TODO: check for stale pending pieces and retry download
 	pendingPieces map[int]*pendingPiece
 }
 
@@ -37,6 +37,7 @@ type pendingPiece struct {
 	data           []byte
 	totalBlocks    int
 	blocksReceived int
+	validUntil     time.Time
 }
 
 type bitfield struct {
@@ -116,6 +117,7 @@ func (peer *Peer) StartDownload(
 
 	go peer.requestBlocks(torrent)
 	go peer.listen(torrent, downloadedPieces)
+	go peer.checkStalePieceRequests()
 
 	return nil
 }
@@ -233,6 +235,7 @@ func (peer *Peer) requestBlocks(
 				data:           make([]byte, pieceLength),
 				totalBlocks:    blockCount,
 				blocksReceived: 0,
+				validUntil:     time.Now().Add(pieceRequestTimeout),
 			}
 
 			for block := range blockCount {
@@ -249,6 +252,19 @@ func (peer *Peer) requestBlocks(
 					// TODO: Reconnect in this case.
 					log.Printf("error sending piece request: %v", err)
 				}
+			}
+		}
+	}
+}
+
+func (peer *Peer) checkStalePieceRequests() {
+	for {
+		time.Sleep(pieceRequestTimeout / 10)
+
+		for piece := range peer.pendingPieces {
+			if peer.pendingPieces[piece].validUntil.Before(time.Now()) {
+				delete(peer.pendingPieces, piece)
+				peer.pieces.CheckStateAndChange(piece, pieces.Pending, pieces.NotDownloaded)
 			}
 		}
 	}

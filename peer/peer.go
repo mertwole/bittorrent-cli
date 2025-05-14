@@ -22,6 +22,7 @@ const connectionTimeout = time.Second * 120
 const keepAliveInterval = time.Second * 120
 const pendingPiecesQueueLength = 16
 const pieceRequestTimeout = time.Second * 20
+const blockSize = 1 << 14
 
 type Peer struct {
 	info            tracker.PeerInfo
@@ -29,8 +30,12 @@ type Peer struct {
 	availablePieces *bitfield
 	chocked         bool
 	pieces          *pieces.Pieces
-	// TODO: Mutex
+	pendingPieces   pendingPieces
+}
+
+type pendingPieces struct {
 	pendingPieces map[int]*pendingPiece
+	mutex         sync.RWMutex
 }
 
 type pendingPiece struct {
@@ -40,6 +45,41 @@ type pendingPiece struct {
 	blocksReceived int
 	validUntil     time.Time
 }
+
+type donePiece struct {
+	idx  int
+	data []byte
+}
+
+func newPendingPieces() pendingPieces {
+	return pendingPieces{pendingPieces: make(map[int]*pendingPiece)}
+}
+
+func (pendingPieces *pendingPieces) insertData(piece int, offset int, data []byte) (*donePiece, error) {
+	pendingPieces.mutex.Lock()
+	defer pendingPieces.mutex.Unlock()
+
+	pendingPiece, ok := pendingPieces.pendingPieces[piece]
+	if !ok {
+		return nil, fmt.Errorf("unexpected piece #%d received", piece)
+	}
+
+	copy(pendingPiece.data[offset:], data)
+	pendingPiece.blocksReceived++
+
+	if pendingPiece.blocksReceived == pendingPiece.totalBlocks {
+		delete(pendingPieces.pendingPieces, piece)
+
+		return &donePiece{idx: pendingPiece.idx, data: pendingPiece.data}, nil
+	}
+
+	return nil, nil
+}
+
+// TODO:
+// length
+// insert
+// remove stale
 
 type bitfield struct {
 	bitfield []byte
@@ -51,8 +91,9 @@ func (bitfield *bitfield) addPiece(piece int) {
 	bitIdx := piece % 8
 
 	bitfield.mutex.Lock()
+	defer bitfield.mutex.Unlock()
+
 	bitfield.bitfield[byteIdx] |= 1 << (7 - bitIdx)
-	bitfield.mutex.Unlock()
 }
 
 func (bitfield *bitfield) containsPiece(piece int) bool {
@@ -60,10 +101,9 @@ func (bitfield *bitfield) containsPiece(piece int) bool {
 	bitIdx := piece % 8
 
 	bitfield.mutex.RLock()
-	result := bitfield.bitfield[byteIdx]&(1<<(7-bitIdx)) != 0
-	bitfield.mutex.RUnlock()
+	defer bitfield.mutex.RUnlock()
 
-	return result
+	return bitfield.bitfield[byteIdx]&(1<<(7-bitIdx)) != 0
 }
 
 func (peer *Peer) GetInfo() tracker.PeerInfo {
@@ -119,7 +159,7 @@ func (peer *Peer) StartDownload(
 	downloadedPieces chan<- download.DownloadedPiece,
 ) error {
 	peer.pieces = pieces
-	peer.pendingPieces = make(map[int]*pendingPiece)
+	peer.pendingPieces = newPendingPieces()
 
 	go peer.sendKeepAlive()
 
@@ -167,19 +207,16 @@ func (peer *Peer) listen(
 			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
 			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
 
-			pendingPiece, ok := peer.pendingPieces[int(index)]
-			if !ok {
-				log.Printf("unexpected piece #%d received", index)
-				continue
+			donePiece, err := peer.pendingPieces.insertData(int(index), int(begin), receivedMessage.Payload[8:])
+			if err != nil {
+				// TODO: Process this error.
+				log.Printf("failed to insert data to the pending piece: %v", err)
 			}
 
-			copy(pendingPiece.data[begin:], receivedMessage.Payload[8:])
-			pendingPiece.blocksReceived++
-
-			if pendingPiece.blocksReceived == pendingPiece.totalBlocks {
+			if donePiece != nil {
 				log.Printf("received piece #%d", index)
 
-				sha1 := sha1.Sum(pendingPiece.data)
+				sha1 := sha1.Sum(donePiece.data)
 				if torrent.Pieces[index] != sha1 {
 					// TODO: Gracefully process this case
 					log.Fatalf(
@@ -189,7 +226,7 @@ func (peer *Peer) listen(
 					)
 				} else {
 					globalOffset := int(index) * torrent.PieceLength
-					downloadedPieces <- download.DownloadedPiece{Offset: globalOffset, Data: pendingPiece.data}
+					downloadedPieces <- download.DownloadedPiece{Offset: globalOffset, Data: donePiece.data}
 
 					if !peer.pieces.CheckStateAndChange(int(index), pieces.Pending, pieces.Downloaded) {
 						log.Panicf(
@@ -198,8 +235,6 @@ func (peer *Peer) listen(
 							peer.pieces.GetState(int(index)),
 						)
 					}
-
-					delete(peer.pendingPieces, int(index))
 				}
 			}
 		case message.Cancel:
@@ -207,8 +242,6 @@ func (peer *Peer) listen(
 		}
 	}
 }
-
-const blockSize = 1 << 14
 
 func (peer *Peer) requestBlocks(
 	torrent *torrent_info.TorrentInfo,

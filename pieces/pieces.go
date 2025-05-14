@@ -28,6 +28,13 @@ func NewPieces(count int, downloaded *[]int) *Pieces {
 	return &Pieces{pieces: pieces}
 }
 
+func (pieces *Pieces) Length() int {
+	pieces.mutex.RLock()
+	len := len(pieces.pieces)
+	pieces.mutex.RUnlock()
+	return len
+}
+
 func (pieces *Pieces) GetState(index int) PieceState {
 	pieces.mutex.RLock()
 	state := pieces.pieces[index]

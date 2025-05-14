@@ -20,6 +20,14 @@ var downloadFolderName = flag.String("download", "./data", "Path to the download
 func main() {
 	flag.Parse()
 
+	logFile, err := os.OpenFile("log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	if err != nil {
+		log.Fatalf("error opening log file: %v", err)
+	}
+	defer logFile.Close()
+
+	log.SetOutput(logFile)
+
 	torrentFile, err := os.Open(*torrentFileName)
 	if err != nil {
 		log.Fatal("Failed to open torrent file: ", err)

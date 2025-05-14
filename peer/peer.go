@@ -76,10 +76,43 @@ func (pendingPieces *pendingPieces) insertData(piece int, offset int, data []byt
 	return nil, nil
 }
 
-// TODO:
-// length
-// insert
-// remove stale
+func (pendingPieces *pendingPieces) length() int {
+	pendingPieces.mutex.RLock()
+	defer pendingPieces.mutex.RUnlock()
+
+	return len(pendingPieces.pendingPieces)
+}
+
+func (pendingPieces *pendingPieces) insert(piece int, pieceLength int) {
+	blockCount := (pieceLength + blockSize - 1) / blockSize
+	newPendingPiece := pendingPiece{
+		idx:            piece,
+		data:           make([]byte, pieceLength),
+		totalBlocks:    blockCount,
+		blocksReceived: 0,
+		validUntil:     time.Now().Add(pieceRequestTimeout),
+	}
+
+	pendingPieces.mutex.Lock()
+	defer pendingPieces.mutex.Unlock()
+
+	pendingPieces.pendingPieces[piece] = &newPendingPiece
+}
+
+func (pendingPieces *pendingPieces) removeStale() []int {
+	pendingPieces.mutex.Lock()
+	defer pendingPieces.mutex.Unlock()
+
+	removed := make([]int, 0)
+	for piece := range pendingPieces.pendingPieces {
+		if pendingPieces.pendingPieces[piece].validUntil.Before(time.Now()) {
+			delete(pendingPieces.pendingPieces, piece)
+			removed = append(removed, piece)
+		}
+	}
+
+	return removed
+}
 
 type bitfield struct {
 	bitfield []byte
@@ -257,7 +290,7 @@ func (peer *Peer) requestBlocks(
 				continue
 			}
 
-			if len(peer.pendingPieces) >= pendingPiecesQueueLength {
+			if peer.pendingPieces.length() >= pendingPiecesQueueLength {
 				time.Sleep(time.Millisecond * 100)
 				continue
 			}
@@ -271,13 +304,7 @@ func (peer *Peer) requestBlocks(
 			pieceLength := min(torrent.PieceLength, torrent.TotalLength-pieceIdx*torrent.PieceLength)
 			blockCount := (pieceLength + blockSize - 1) / blockSize
 
-			peer.pendingPieces[pieceIdx] = &pendingPiece{
-				idx:            pieceIdx,
-				data:           make([]byte, pieceLength),
-				totalBlocks:    blockCount,
-				blocksReceived: 0,
-				validUntil:     time.Now().Add(pieceRequestTimeout),
-			}
+			peer.pendingPieces.insert(pieceIdx, pieceLength)
 
 			for block := range blockCount {
 				length := min(blockSize, pieceLength-block*blockSize)
@@ -302,11 +329,9 @@ func (peer *Peer) checkStalePieceRequests() {
 	for {
 		time.Sleep(pieceRequestTimeout / 10)
 
-		for piece := range peer.pendingPieces {
-			if peer.pendingPieces[piece].validUntil.Before(time.Now()) {
-				delete(peer.pendingPieces, piece)
-				peer.pieces.CheckStateAndChange(piece, pieces.Pending, pieces.NotDownloaded)
-			}
+		stalePieces := peer.pendingPieces.removeStale()
+		for _, stale := range stalePieces {
+			peer.pieces.CheckStateAndChange(stale, pieces.Pending, pieces.NotDownloaded)
 		}
 	}
 }

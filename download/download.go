@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mertwole/bittorent-cli/torrent_info"
+	"github.com/mertwole/bittorrent-cli/torrent_info"
 )
 
 type DownloadedPiece struct {

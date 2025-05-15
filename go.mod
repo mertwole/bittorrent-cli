@@ -1,4 +1,4 @@
-module github.com/mertwole/bittorent-cli
+module github.com/mertwole/bittorrent-cli
 
 go 1.24.2
 

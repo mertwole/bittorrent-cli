@@ -10,11 +10,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mertwole/bittorent-cli/download"
-	"github.com/mertwole/bittorent-cli/peer"
-	"github.com/mertwole/bittorent-cli/pieces"
-	"github.com/mertwole/bittorent-cli/torrent_info"
-	"github.com/mertwole/bittorent-cli/tracker"
+	"github.com/mertwole/bittorrent-cli/download"
+	"github.com/mertwole/bittorrent-cli/peer"
+	"github.com/mertwole/bittorrent-cli/pieces"
+	"github.com/mertwole/bittorrent-cli/torrent_info"
+	"github.com/mertwole/bittorrent-cli/tracker"
 )
 
 const discoveredPeersQueueSize = 16

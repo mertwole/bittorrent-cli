@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mertwole/bittorent-cli/download"
-	"github.com/mertwole/bittorent-cli/peer/message"
-	"github.com/mertwole/bittorent-cli/pieces"
-	"github.com/mertwole/bittorent-cli/torrent_info"
-	"github.com/mertwole/bittorent-cli/tracker"
+	"github.com/mertwole/bittorrent-cli/download"
+	"github.com/mertwole/bittorrent-cli/peer/message"
+	"github.com/mertwole/bittorrent-cli/pieces"
+	"github.com/mertwole/bittorrent-cli/torrent_info"
+	"github.com/mertwole/bittorrent-cli/tracker"
 )
 
 const connectionTimeout = time.Second * 120

@@ -1,20 +1,25 @@
 name: release-artifacts
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  release:
+    types:
+      - created
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  build:
+  attach-artifact:
+    strategy:
+      matrix:
+        goos: [windows, linux]
+        goarch: ["386", amd64]
     runs-on: ubuntu-latest
+    env: 
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      ARTIFACT_NAME: bittorrent-cli-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -23,4 +28,8 @@ jobs:
         with:
           go-version: '1.24.2'
       - name: build
-        run: go build .
+        run: go build -o ./${{ env.ARTIFACT_NAME }} .
+      - name: upload
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./${{ env.ARTIFACT_NAME }}

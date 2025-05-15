@@ -181,7 +181,7 @@ func composeDownloadedPiecesString(downloadedPieces *pieces.Pieces, targetLength
 		case totalDownloadedPieces == totalPieces:
 			str += "█"
 		case totalDownloadedPieces == 0:
-			str += "-"
+			str += "─"
 		case ratio <= 0.33:
 			str += "░"
 		case ratio <= 0.66:

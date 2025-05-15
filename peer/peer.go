@@ -21,7 +21,7 @@ import (
 const connectionTimeout = time.Second * 120
 const keepAliveInterval = time.Second * 120
 const pendingPiecesQueueLength = 16
-const pieceRequestTimeout = time.Second * 20
+const pieceRequestTimeout = time.Second * 120
 const blockSize = 1 << 14
 
 type Peer struct {
@@ -97,6 +97,13 @@ func (pendingPieces *pendingPieces) insert(piece int, pieceLength int) {
 	defer pendingPieces.mutex.Unlock()
 
 	pendingPieces.pendingPieces[piece] = &newPendingPiece
+}
+
+func (pendingPieces *pendingPieces) remove(piece int) {
+	pendingPieces.mutex.Lock()
+	defer pendingPieces.mutex.Unlock()
+
+	delete(pendingPieces.pendingPieces, piece)
 }
 
 func (pendingPieces *pendingPieces) removeStale() []int {
@@ -194,10 +201,15 @@ func (peer *Peer) StartDownload(
 	peer.pieces = pieces
 	peer.pendingPieces = newPendingPieces()
 
-	go peer.sendKeepAlive()
+	sendKeepAliveErrors := make(chan error)
+	go peer.sendKeepAlive(sendKeepAliveErrors)
 
-	go peer.requestBlocks(torrent)
-	go peer.listen(torrent, downloadedPieces)
+	requestBlocksErrors := make(chan error)
+	go peer.requestBlocks(torrent, requestBlocksErrors)
+
+	listenErrors := make(chan error)
+	go peer.listen(torrent, downloadedPieces, listenErrors)
+
 	go peer.checkStalePieceRequests()
 
 	return nil
@@ -206,12 +218,12 @@ func (peer *Peer) StartDownload(
 func (peer *Peer) listen(
 	torrent *torrent_info.TorrentInfo,
 	downloadedPieces chan<- download.DownloadedPiece,
+	errors chan<- error,
 ) {
 	for {
 		receivedMessage, err := message.Decode(peer.connection)
 		if err != nil {
-			// TODO: Reconnect in this case.
-			log.Printf("failed to decode message from peer %+v: %v", peer.info, err)
+			errors <- fmt.Errorf("failed to decode message: %w", err)
 			break
 		}
 
@@ -242,7 +254,7 @@ func (peer *Peer) listen(
 
 			donePiece, err := peer.pendingPieces.insertData(int(index), int(begin), receivedMessage.Payload[8:])
 			if err != nil {
-				// TODO: Process this error.
+				// TODO: Process this error?.
 				log.Printf("failed to insert data to the pending piece: %v", err)
 			}
 
@@ -278,7 +290,9 @@ func (peer *Peer) listen(
 
 func (peer *Peer) requestBlocks(
 	torrent *torrent_info.TorrentInfo,
+	errors chan<- error,
 ) {
+Outer:
 	for {
 		if peer.chocked {
 			time.Sleep(time.Millisecond * 100)
@@ -317,8 +331,9 @@ func (peer *Peer) requestBlocks(
 				request := (&message.Message{ID: message.Request, Payload: messagePayload}).Encode()
 				_, err := peer.connection.Write(request)
 				if err != nil {
-					// TODO: Reconnect in this case.
-					log.Printf("error sending piece request: %v", err)
+					peer.pendingPieces.remove(pieceIdx)
+					errors <- fmt.Errorf("error sending piece request: %w", err)
+					break Outer
 				}
 			}
 		}
@@ -336,7 +351,7 @@ func (peer *Peer) checkStalePieceRequests() {
 	}
 }
 
-func (peer *Peer) sendKeepAlive() {
+func (peer *Peer) sendKeepAlive(errors chan<- error) {
 	for {
 		time.Sleep(keepAliveInterval)
 
@@ -344,8 +359,8 @@ func (peer *Peer) sendKeepAlive() {
 
 		_, err := peer.connection.Write(message)
 		if err != nil {
-			// TODO: Reconnect in this case.
-			log.Printf("error sending keep-alive message: %v", err)
+			errors <- fmt.Errorf("error sending keep-alive message: %w", err)
+			break
 		}
 
 		log.Printf("sent keep-alive message")

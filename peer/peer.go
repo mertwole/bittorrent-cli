@@ -402,10 +402,18 @@ Outer:
 func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 	present := peer.pieces.GetBitfield()
 	if !present.IsEmpty() {
-		// TODO: Send bitfield message
+		data := present.ToBytes()
+		request := (&message.Message{ID: message.Bitfield, Payload: data}).Encode()
+
+		_, err := peer.connection.Write(request)
+		if err != nil {
+			errors <- fmt.Errorf("error sending bitfield: %w", err)
+			return
+		}
 	}
 
 	for {
+		time.Sleep(time.Second)
 		// TODO: Send have messages
 	}
 }

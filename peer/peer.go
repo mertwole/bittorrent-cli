@@ -59,6 +59,16 @@ func (requestedPieces *requestedPieces) addRequest(request pieceRequest) {
 	requestedPieces.pieces = append(requestedPieces.pieces, request)
 }
 
+func (requestedPieces *requestedPieces) cancelRequest(request pieceRequest) {
+	requestedPieces.mutex.Lock()
+	defer requestedPieces.mutex.Unlock()
+
+	idx := slices.Index(requestedPieces.pieces, request)
+	if idx != -1 {
+		requestedPieces.pieces = append(requestedPieces.pieces[:idx], requestedPieces.pieces[idx+1:]...)
+	}
+}
+
 func (requestedPieces *requestedPieces) popRequest() *pieceRequest {
 	requestedPieces.mutex.Lock()
 	defer requestedPieces.mutex.Unlock()
@@ -327,7 +337,12 @@ func (peer *Peer) listen(
 				}
 			}
 		case message.Cancel:
-			// TODO
+			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
+			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
+			length := binary.BigEndian.Uint32(receivedMessage.Payload[8:12])
+
+			request := pieceRequest{piece: int(index), offset: int(begin), length: int(length)}
+			peer.requestedPieces.cancelRequest(request)
 		}
 	}
 }

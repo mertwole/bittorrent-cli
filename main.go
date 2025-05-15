@@ -226,7 +226,7 @@ func downloadFromPeer(
 
 		log.Printf("connected to the peer %+v", peerInfo)
 
-		err = peer.StartDownload(torrentInfo, pieces, downloadedPiecesChannel)
+		err = peer.StartExchange(torrentInfo, pieces, downloadedPiecesChannel)
 		if err != nil {
 			log.Printf("Failed to download data from peer: %v. reconnecting", err)
 		}

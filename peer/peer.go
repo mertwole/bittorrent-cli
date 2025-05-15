@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -32,6 +33,44 @@ type Peer struct {
 	chocked         bool
 	pieces          *pieces.Pieces
 	pendingPieces   pendingPieces
+	requestedPieces requestedPieces
+}
+
+// TODO: Upper bound on this?
+type requestedPieces struct {
+	pieces []pieceRequest
+	mutex  sync.RWMutex
+}
+
+type pieceRequest struct {
+	piece  int
+	offset int
+	length int
+}
+
+func (requestedPieces *requestedPieces) addRequest(request pieceRequest) {
+	requestedPieces.mutex.Lock()
+	defer requestedPieces.mutex.Unlock()
+
+	if slices.Contains(requestedPieces.pieces, request) {
+		return
+	}
+
+	requestedPieces.pieces = append(requestedPieces.pieces, request)
+}
+
+func (requestedPieces *requestedPieces) popRequest() *pieceRequest {
+	requestedPieces.mutex.Lock()
+	defer requestedPieces.mutex.Unlock()
+
+	if len(requestedPieces.pieces) == 0 {
+		return nil
+	}
+
+	request := requestedPieces.pieces[0]
+	requestedPieces.pieces = requestedPieces.pieces[1:]
+
+	return &request
 }
 
 type pendingPieces struct {
@@ -188,7 +227,7 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 	return nil
 }
 
-func (peer *Peer) StartDownload(
+func (peer *Peer) StartExchange(
 	torrent *torrent_info.TorrentInfo,
 	pieces *pieces.Pieces,
 	downloadedPieces chan<- download.DownloadedPiece,
@@ -207,6 +246,12 @@ func (peer *Peer) StartDownload(
 	listenErrors := make(chan error)
 	go peer.listen(torrent, downloadedPieces, listenErrors)
 
+	notifyPresentPiecesErrors := make(chan error)
+	go peer.notifyPresentPieces(notifyPresentPiecesErrors)
+
+	uploadPiecesErrors := make(chan error)
+	go peer.uploadPieces(uploadPiecesErrors)
+
 	go peer.checkStalePieceRequests()
 
 	select {
@@ -215,6 +260,8 @@ func (peer *Peer) StartDownload(
 	case err := <-requestBlocksErrors:
 		return err
 	case err := <-listenErrors:
+		return err
+	case err := <-notifyPresentPiecesErrors:
 		return err
 	}
 }
@@ -253,7 +300,12 @@ func (peer *Peer) listen(
 				inner: bitfield.New(receivedMessage.Payload, len(torrent.Pieces)),
 			}
 		case message.Request:
-			// TODO
+			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
+			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
+			length := binary.BigEndian.Uint32(receivedMessage.Payload[8:12])
+
+			request := pieceRequest{piece: int(index), offset: int(begin), length: int(length)}
+			peer.requestedPieces.addRequest(request)
 		case message.Piece:
 			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
 			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
@@ -348,6 +400,14 @@ Outer:
 			}
 		}
 	}
+}
+
+func (peer *Peer) notifyPresentPieces(errors chan<- error) {
+	// TODO
+}
+
+func (peer *Peer) uploadPieces(errors chan<- error) {
+	// TODO
 }
 
 func (peer *Peer) checkStalePieceRequests() {

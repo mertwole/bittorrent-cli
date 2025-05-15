@@ -262,24 +262,28 @@ func (peer *Peer) listen(
 				log.Printf("received piece #%d", index)
 
 				sha1 := sha1.Sum(donePiece.data)
+				var newState pieces.PieceState
 				if torrent.Pieces[index] != sha1 {
-					// TODO: Gracefully process this case
-					log.Fatalf(
+					log.Printf(
 						"received piece with invalid hash: expected %s, got %s",
 						hex.EncodeToString(torrent.Pieces[index][:]),
 						hex.EncodeToString(sha1[:]),
 					)
+
+					newState = pieces.NotDownloaded
 				} else {
 					globalOffset := int(index) * torrent.PieceLength
 					downloadedPieces <- download.DownloadedPiece{Offset: globalOffset, Data: donePiece.data}
 
-					if !peer.pieces.CheckStateAndChange(int(index), pieces.Pending, pieces.Downloaded) {
-						log.Panicf(
-							"Piece is in unexpected state. Expected %v, got %v",
-							pieces.Pending,
-							peer.pieces.GetState(int(index)),
-						)
-					}
+					newState = pieces.Downloaded
+				}
+
+				if !peer.pieces.CheckStateAndChange(int(index), pieces.Pending, newState) {
+					log.Panicf(
+						"Piece is in unexpected state. Expected %v, got %v",
+						pieces.Pending,
+						peer.pieces.GetState(int(index)),
+					)
 				}
 			}
 		case message.Cancel:

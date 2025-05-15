@@ -254,6 +254,8 @@ func (peer *Peer) StartExchange(
 		return err
 	case err := <-notifyPresentPiecesErrors:
 		return err
+	case err := <-uploadPiecesErrors:
+		return err
 	}
 }
 

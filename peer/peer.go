@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/mertwole/bittorrent-cli/bitfield"
 	"github.com/mertwole/bittorrent-cli/download"
 	"github.com/mertwole/bittorrent-cli/peer/message"
 	"github.com/mertwole/bittorrent-cli/pieces"
@@ -27,10 +29,58 @@ const blockSize = 1 << 14
 type Peer struct {
 	info            tracker.PeerInfo
 	connection      net.Conn
-	availablePieces *bitfield
+	availablePieces *bitfield.ConcurrentBitfield
 	chocked         bool
 	pieces          *pieces.Pieces
 	pendingPieces   pendingPieces
+	requestedPieces requestedPieces
+}
+
+// TODO: Upper bound on this?
+type requestedPieces struct {
+	pieces []pieceRequest
+	mutex  sync.RWMutex
+}
+
+type pieceRequest struct {
+	piece  int
+	offset int
+	length int
+}
+
+func (requestedPieces *requestedPieces) addRequest(request pieceRequest) {
+	requestedPieces.mutex.Lock()
+	defer requestedPieces.mutex.Unlock()
+
+	if slices.Contains(requestedPieces.pieces, request) {
+		return
+	}
+
+	requestedPieces.pieces = append(requestedPieces.pieces, request)
+}
+
+func (requestedPieces *requestedPieces) cancelRequest(request pieceRequest) {
+	requestedPieces.mutex.Lock()
+	defer requestedPieces.mutex.Unlock()
+
+	idx := slices.Index(requestedPieces.pieces, request)
+	if idx != -1 {
+		requestedPieces.pieces = append(requestedPieces.pieces[:idx], requestedPieces.pieces[idx+1:]...)
+	}
+}
+
+func (requestedPieces *requestedPieces) popRequest() *pieceRequest {
+	requestedPieces.mutex.Lock()
+	defer requestedPieces.mutex.Unlock()
+
+	if len(requestedPieces.pieces) == 0 {
+		return nil
+	}
+
+	request := requestedPieces.pieces[0]
+	requestedPieces.pieces = requestedPieces.pieces[1:]
+
+	return &request
 }
 
 type pendingPieces struct {
@@ -121,31 +171,6 @@ func (pendingPieces *pendingPieces) removeStale() []int {
 	return removed
 }
 
-type bitfield struct {
-	bitfield []byte
-	mutex    sync.RWMutex
-}
-
-func (bitfield *bitfield) addPiece(piece int) {
-	byteIdx := piece / 8
-	bitIdx := piece % 8
-
-	bitfield.mutex.Lock()
-	defer bitfield.mutex.Unlock()
-
-	bitfield.bitfield[byteIdx] |= 1 << (7 - bitIdx)
-}
-
-func (bitfield *bitfield) containsPiece(piece int) bool {
-	byteIdx := piece / 8
-	bitIdx := piece % 8
-
-	bitfield.mutex.RLock()
-	defer bitfield.mutex.RUnlock()
-
-	return bitfield.bitfield[byteIdx]&(1<<(7-bitIdx)) != 0
-}
-
 func (peer *Peer) GetInfo() tracker.PeerInfo {
 	return peer.info
 }
@@ -193,7 +218,7 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 	return nil
 }
 
-func (peer *Peer) StartDownload(
+func (peer *Peer) StartExchange(
 	torrent *torrent_info.TorrentInfo,
 	pieces *pieces.Pieces,
 	downloadedPieces chan<- download.DownloadedPiece,
@@ -212,6 +237,12 @@ func (peer *Peer) StartDownload(
 	listenErrors := make(chan error)
 	go peer.listen(torrent, downloadedPieces, listenErrors)
 
+	notifyPresentPiecesErrors := make(chan error)
+	go peer.notifyPresentPieces(notifyPresentPiecesErrors)
+
+	uploadPiecesErrors := make(chan error)
+	go peer.uploadPieces(uploadPiecesErrors)
+
 	go peer.checkStalePieceRequests()
 
 	select {
@@ -220,6 +251,10 @@ func (peer *Peer) StartDownload(
 	case err := <-requestBlocksErrors:
 		return err
 	case err := <-listenErrors:
+		return err
+	case err := <-notifyPresentPiecesErrors:
+		return err
+	case err := <-uploadPiecesErrors:
 		return err
 	}
 }
@@ -252,11 +287,19 @@ func (peer *Peer) listen(
 			// TODO
 		case message.Have:
 			havePiece := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
-			peer.availablePieces.addPiece(int(havePiece))
+			peer.availablePieces.AddPiece(int(havePiece))
 		case message.Bitfield:
-			peer.availablePieces = &bitfield{bitfield: receivedMessage.Payload}
+			peer.availablePieces = bitfield.NewConcurrentBitfield(
+				receivedMessage.Payload,
+				len(torrent.Pieces),
+			)
 		case message.Request:
-			// TODO
+			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
+			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
+			length := binary.BigEndian.Uint32(receivedMessage.Payload[8:12])
+
+			request := pieceRequest{piece: int(index), offset: int(begin), length: int(length)}
+			peer.requestedPieces.addRequest(request)
 		case message.Piece:
 			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
 			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
@@ -296,7 +339,12 @@ func (peer *Peer) listen(
 				}
 			}
 		case message.Cancel:
-			// TODO
+			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
+			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
+			length := binary.BigEndian.Uint32(receivedMessage.Payload[8:12])
+
+			request := pieceRequest{piece: int(index), offset: int(begin), length: int(length)}
+			peer.requestedPieces.cancelRequest(request)
 		}
 	}
 }
@@ -313,7 +361,7 @@ Outer:
 		}
 
 		for pieceIdx := range len(torrent.Pieces) {
-			if peer.availablePieces == nil || !peer.availablePieces.containsPiece(pieceIdx) {
+			if peer.availablePieces == nil || !peer.availablePieces.ContainsPiece(pieceIdx) {
 				continue
 			}
 
@@ -351,6 +399,29 @@ Outer:
 			}
 		}
 	}
+}
+
+func (peer *Peer) notifyPresentPieces(errors chan<- error) {
+	present := peer.pieces.GetBitfield()
+	if !present.IsEmpty() {
+		data := present.ToBytes()
+		request := (&message.Message{ID: message.Bitfield, Payload: data}).Encode()
+
+		_, err := peer.connection.Write(request)
+		if err != nil {
+			errors <- fmt.Errorf("error sending bitfield: %w", err)
+			return
+		}
+	}
+
+	for {
+		time.Sleep(time.Second)
+		// TODO: Send have messages
+	}
+}
+
+func (peer *Peer) uploadPieces(errors chan<- error) {
+	// TODO
 }
 
 func (peer *Peer) checkStalePieceRequests() {

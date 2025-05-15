@@ -20,7 +20,7 @@ import (
 
 const connectionTimeout = time.Second * 120
 const keepAliveInterval = time.Second * 120
-const pendingPiecesQueueLength = 16
+const pendingPiecesQueueLength = 5
 const pieceRequestTimeout = time.Second * 120
 const blockSize = 1 << 14
 

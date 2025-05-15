@@ -1,20 +1,32 @@
 package bitfield
 
+import "sync"
+
 type Bitfield struct {
 	data   []byte
 	length int
 }
 
-func New(data []byte, length int) Bitfield {
+func NewBitfield(data []byte, length int) Bitfield {
 	return Bitfield{data: data, length: length}
 }
 
-func NewEmpty(pieceCount int) Bitfield {
+func NewEmptyBitfield(pieceCount int) Bitfield {
 	return Bitfield{data: make([]byte, (pieceCount+7)/8), length: pieceCount}
 }
 
 func (bitfield *Bitfield) Length() int {
 	return bitfield.length
+}
+
+func (bitfield *Bitfield) IsEmpty() bool {
+	for _, byte_ := range bitfield.data {
+		if byte_ != 0 {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (bitfield *Bitfield) ToBytes() []byte {
@@ -40,4 +52,34 @@ func (bitfield *Bitfield) ContainsPiece(piece int) bool {
 	bitIdx := piece % 8
 
 	return bitfield.data[byteIdx]&(1<<(7-bitIdx)) != 0
+}
+
+type ConcurrentBitfield struct {
+	inner Bitfield
+	mutex sync.RWMutex
+}
+
+func NewConcurrentBitfield(data []byte, length int) *ConcurrentBitfield {
+	return &ConcurrentBitfield{inner: NewBitfield(data, length)}
+}
+
+func (bitfield *ConcurrentBitfield) AddPiece(piece int) {
+	bitfield.mutex.Lock()
+	defer bitfield.mutex.Unlock()
+
+	bitfield.inner.AddPiece(piece)
+}
+
+func (bitfield *ConcurrentBitfield) ContainsPiece(piece int) bool {
+	bitfield.mutex.RLock()
+	defer bitfield.mutex.RUnlock()
+
+	return bitfield.inner.ContainsPiece(piece)
+}
+
+func (bitfield *ConcurrentBitfield) IsEmpty() bool {
+	bitfield.mutex.RLock()
+	defer bitfield.mutex.RUnlock()
+
+	return bitfield.inner.IsEmpty()
 }

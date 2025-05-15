@@ -26,7 +26,7 @@ func New(count int, downloaded *[]int) *Pieces {
 		pieces[i] = NotDownloaded
 	}
 
-	bitfield := bitfield.NewEmpty(count)
+	bitfield := bitfield.NewEmptyBitfield(count)
 
 	for _, downloaded := range *downloaded {
 		pieces[downloaded] = Downloaded

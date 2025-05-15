@@ -29,7 +29,7 @@ const blockSize = 1 << 14
 type Peer struct {
 	info            tracker.PeerInfo
 	connection      net.Conn
-	availablePieces *concurrentBitfield
+	availablePieces *bitfield.ConcurrentBitfield
 	chocked         bool
 	pieces          *pieces.Pieces
 	pendingPieces   pendingPieces
@@ -161,25 +161,6 @@ func (pendingPieces *pendingPieces) removeStale() []int {
 	return removed
 }
 
-type concurrentBitfield struct {
-	inner bitfield.Bitfield
-	mutex sync.RWMutex
-}
-
-func (bitfield *concurrentBitfield) addPiece(piece int) {
-	bitfield.mutex.Lock()
-	defer bitfield.mutex.Unlock()
-
-	bitfield.inner.AddPiece(piece)
-}
-
-func (bitfield *concurrentBitfield) containsPiece(piece int) bool {
-	bitfield.mutex.RLock()
-	defer bitfield.mutex.RUnlock()
-
-	return bitfield.inner.ContainsPiece(piece)
-}
-
 func (peer *Peer) GetInfo() tracker.PeerInfo {
 	return peer.info
 }
@@ -294,11 +275,12 @@ func (peer *Peer) listen(
 			// TODO
 		case message.Have:
 			havePiece := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
-			peer.availablePieces.addPiece(int(havePiece))
+			peer.availablePieces.AddPiece(int(havePiece))
 		case message.Bitfield:
-			peer.availablePieces = &concurrentBitfield{
-				inner: bitfield.New(receivedMessage.Payload, len(torrent.Pieces)),
-			}
+			peer.availablePieces = bitfield.NewConcurrentBitfield(
+				receivedMessage.Payload,
+				len(torrent.Pieces),
+			)
 		case message.Request:
 			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
 			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
@@ -362,7 +344,7 @@ Outer:
 		}
 
 		for pieceIdx := range len(torrent.Pieces) {
-			if peer.availablePieces == nil || !peer.availablePieces.containsPiece(pieceIdx) {
+			if peer.availablePieces == nil || !peer.availablePieces.ContainsPiece(pieceIdx) {
 				continue
 			}
 
@@ -403,7 +385,14 @@ Outer:
 }
 
 func (peer *Peer) notifyPresentPieces(errors chan<- error) {
-	// TODO
+	present := peer.pieces.GetBitfield()
+	if !present.IsEmpty() {
+		// TODO: Send bitfield message
+	}
+
+	for {
+		// TODO: Send have messages
+	}
 }
 
 func (peer *Peer) uploadPieces(errors chan<- error) {

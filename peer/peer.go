@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mertwole/bittorrent-cli/bitfield"
 	"github.com/mertwole/bittorrent-cli/download"
 	"github.com/mertwole/bittorrent-cli/peer/message"
 	"github.com/mertwole/bittorrent-cli/pieces"
@@ -27,7 +28,7 @@ const blockSize = 1 << 14
 type Peer struct {
 	info            tracker.PeerInfo
 	connection      net.Conn
-	availablePieces *bitfield
+	availablePieces *concurrentBitfield
 	chocked         bool
 	pieces          *pieces.Pieces
 	pendingPieces   pendingPieces
@@ -121,29 +122,23 @@ func (pendingPieces *pendingPieces) removeStale() []int {
 	return removed
 }
 
-type bitfield struct {
-	bitfield []byte
-	mutex    sync.RWMutex
+type concurrentBitfield struct {
+	inner bitfield.Bitfield
+	mutex sync.RWMutex
 }
 
-func (bitfield *bitfield) addPiece(piece int) {
-	byteIdx := piece / 8
-	bitIdx := piece % 8
-
+func (bitfield *concurrentBitfield) addPiece(piece int) {
 	bitfield.mutex.Lock()
 	defer bitfield.mutex.Unlock()
 
-	bitfield.bitfield[byteIdx] |= 1 << (7 - bitIdx)
+	bitfield.inner.AddPiece(piece)
 }
 
-func (bitfield *bitfield) containsPiece(piece int) bool {
-	byteIdx := piece / 8
-	bitIdx := piece % 8
-
+func (bitfield *concurrentBitfield) containsPiece(piece int) bool {
 	bitfield.mutex.RLock()
 	defer bitfield.mutex.RUnlock()
 
-	return bitfield.bitfield[byteIdx]&(1<<(7-bitIdx)) != 0
+	return bitfield.inner.ContainsPiece(piece)
 }
 
 func (peer *Peer) GetInfo() tracker.PeerInfo {
@@ -254,7 +249,9 @@ func (peer *Peer) listen(
 			havePiece := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
 			peer.availablePieces.addPiece(int(havePiece))
 		case message.Bitfield:
-			peer.availablePieces = &bitfield{bitfield: receivedMessage.Payload}
+			peer.availablePieces = &concurrentBitfield{
+				inner: bitfield.New(receivedMessage.Payload, len(torrent.Pieces)),
+			}
 		case message.Request:
 			// TODO
 		case message.Piece:

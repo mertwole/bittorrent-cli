@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mertwole/bittorrent-cli/bitfield"
 	"github.com/mertwole/bittorrent-cli/download"
 	"github.com/mertwole/bittorrent-cli/peer"
 	"github.com/mertwole/bittorrent-cli/pieces"
@@ -50,7 +51,7 @@ func main() {
 
 	log.Printf("Discovered %d already downloaded pieces", len(donePieces))
 
-	pieces := pieces.NewPieces(len(torrentInfo.Pieces), &donePieces)
+	pieces := pieces.New(len(torrentInfo.Pieces), &donePieces)
 
 	go StartUI(pieces)
 
@@ -119,12 +120,13 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 func (screen mainScreen) View() string {
 	blockCount := screen.Width - 10
 
-	str := composeDownloadedPiecesString(screen.pieces, blockCount)
+	downloadedPiecesBitfield := screen.pieces.GetBitfield()
+	str := composeDownloadedPiecesString(&downloadedPiecesBitfield, blockCount)
 
 	downloadedPieces := 0
 	totalPieces := screen.pieces.Length()
 	for piece := range totalPieces {
-		if screen.pieces.GetState(piece) == pieces.Downloaded {
+		if downloadedPiecesBitfield.ContainsPiece(piece) {
 			downloadedPieces++
 		}
 	}
@@ -156,7 +158,7 @@ func (screen mainScreen) View() string {
 		Render()
 }
 
-func composeDownloadedPiecesString(downloadedPieces *pieces.Pieces, targetLength int) string {
+func composeDownloadedPiecesString(downloadedPieces *bitfield.Bitfield, targetLength int) string {
 	pieceCount := downloadedPieces.Length()
 
 	str := ""
@@ -171,7 +173,7 @@ func composeDownloadedPiecesString(downloadedPieces *pieces.Pieces, targetLength
 		totalPieces := lastPiece - firstPiece + 1
 		totalDownloadedPieces := 0
 		for i := firstPiece; i <= lastPiece; i++ {
-			if downloadedPieces.GetState(i) == pieces.Downloaded {
+			if downloadedPieces.ContainsPiece(i) {
 				totalDownloadedPieces++
 			}
 		}

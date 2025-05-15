@@ -208,23 +208,25 @@ func downloadFromPeer(
 	pieces *pieces.Pieces,
 	downloadedPiecesChannel chan<- download.DownloadedPiece,
 ) {
-	peer := peer.Peer{}
-	err := peer.Connect(peerInfo)
-	if err != nil {
-		log.Printf("Failed to connect to the peer: %v", err)
-		return
-	}
+	for {
+		peer := peer.Peer{}
+		err := peer.Connect(peerInfo)
+		if err != nil {
+			log.Printf("Failed to connect to the peer: %v", err)
+			return
+		}
 
-	err = peer.Handshake(torrentInfo)
-	if err != nil {
-		log.Printf("Failed to handshake with the peer: %v", err)
-		return
-	}
+		err = peer.Handshake(torrentInfo)
+		if err != nil {
+			log.Printf("Failed to handshake with the peer: %v", err)
+			return
+		}
 
-	log.Printf("connected to the peer %+v", peerInfo)
+		log.Printf("connected to the peer %+v", peerInfo)
 
-	err = peer.StartDownload(torrentInfo, pieces, downloadedPiecesChannel)
-	if err != nil {
-		log.Fatal("Failed to start downloading data from peer: ", err)
+		err = peer.StartDownload(torrentInfo, pieces, downloadedPiecesChannel)
+		if err != nil {
+			log.Printf("Failed to download data from peer: %v. reconnecting", err)
+		}
 	}
 }

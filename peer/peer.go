@@ -198,6 +198,8 @@ func (peer *Peer) StartDownload(
 	pieces *pieces.Pieces,
 	downloadedPieces chan<- download.DownloadedPiece,
 ) error {
+	// TODO: Cancel goroutines when error occured and cleanup the pendingPieces.
+
 	peer.pieces = pieces
 	peer.pendingPieces = newPendingPieces()
 
@@ -212,7 +214,14 @@ func (peer *Peer) StartDownload(
 
 	go peer.checkStalePieceRequests()
 
-	return nil
+	select {
+	case err := <-sendKeepAliveErrors:
+		return err
+	case err := <-requestBlocksErrors:
+		return err
+	case err := <-listenErrors:
+		return err
+	}
 }
 
 func (peer *Peer) listen(

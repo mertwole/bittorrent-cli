@@ -2,7 +2,6 @@ package peer
 
 import (
 	"crypto/sha1"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -65,7 +64,7 @@ func (requestedPieces *requestedPieces) cancelRequest(request pieceRequest) {
 
 	idx := slices.Index(requestedPieces.pieces, request)
 	if idx != -1 {
-		requestedPieces.pieces = append(requestedPieces.pieces[:idx], requestedPieces.pieces[idx+1:]...)
+		requestedPieces.pieces = slices.Delete(requestedPieces.pieces, idx, idx+1)
 	}
 }
 
@@ -276,74 +275,62 @@ func (peer *Peer) listen(
 			continue
 		}
 
-		switch receivedMessage.ID {
-		case message.Choke:
+		switch msg := receivedMessage.(type) {
+		case *message.Choke:
 			peer.chocked = true
-		case message.Unchoke:
+		case *message.Unchoke:
 			peer.chocked = false
-		case message.Interested:
+		case *message.Interested:
 			// TODO
-		case message.NotInterested:
+		case *message.NotInterested:
 			// TODO
-		case message.Have:
-			havePiece := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
-			peer.availablePieces.AddPiece(int(havePiece))
-		case message.Bitfield:
+		case *message.Have:
+			peer.availablePieces.AddPiece(msg.Piece)
+		case *message.Bitfield:
 			peer.availablePieces = bitfield.NewConcurrentBitfield(
-				receivedMessage.Payload,
+				msg.Bitfield,
 				len(torrent.Pieces),
 			)
-		case message.Request:
-			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
-			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
-			length := binary.BigEndian.Uint32(receivedMessage.Payload[8:12])
-
-			request := pieceRequest{piece: int(index), offset: int(begin), length: int(length)}
+		case *message.Request:
+			request := pieceRequest{piece: msg.Piece, offset: msg.Offset, length: msg.Length}
 			peer.requestedPieces.addRequest(request)
-		case message.Piece:
-			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
-			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
-
-			donePiece, err := peer.pendingPieces.insertData(int(index), int(begin), receivedMessage.Payload[8:])
+		case *message.Piece:
+			donePiece, err := peer.pendingPieces.insertData(msg.Piece, msg.Offset, msg.Data)
 			if err != nil {
 				// TODO: Process this error?.
 				log.Printf("failed to insert data to the pending piece: %v", err)
 			}
 
 			if donePiece != nil {
-				log.Printf("received piece #%d", index)
+				log.Printf("received piece #%d", msg.Piece)
 
 				sha1 := sha1.Sum(donePiece.data)
 				var newState pieces.PieceState
-				if torrent.Pieces[index] != sha1 {
+				if torrent.Pieces[msg.Piece] != sha1 {
 					log.Printf(
 						"received piece with invalid hash: expected %s, got %s",
-						hex.EncodeToString(torrent.Pieces[index][:]),
+						hex.EncodeToString(torrent.Pieces[msg.Piece][:]),
 						hex.EncodeToString(sha1[:]),
 					)
 
 					newState = pieces.NotDownloaded
 				} else {
-					globalOffset := int(index) * torrent.PieceLength
+					globalOffset := int(msg.Piece) * torrent.PieceLength
 					downloadedPieces <- download.DownloadedPiece{Offset: globalOffset, Data: donePiece.data}
 
 					newState = pieces.Downloaded
 				}
 
-				if !peer.pieces.CheckStateAndChange(int(index), pieces.Pending, newState) {
+				if !peer.pieces.CheckStateAndChange(int(msg.Piece), pieces.Pending, newState) {
 					log.Panicf(
 						"Piece is in unexpected state. Expected %v, got %v",
 						pieces.Pending,
-						peer.pieces.GetState(int(index)),
+						peer.pieces.GetState(int(msg.Piece)),
 					)
 				}
 			}
-		case message.Cancel:
-			index := binary.BigEndian.Uint32(receivedMessage.Payload[:4])
-			begin := binary.BigEndian.Uint32(receivedMessage.Payload[4:8])
-			length := binary.BigEndian.Uint32(receivedMessage.Payload[8:12])
-
-			request := pieceRequest{piece: int(index), offset: int(begin), length: int(length)}
+		case *message.Cancel:
+			request := pieceRequest{piece: msg.Piece, offset: msg.Offset, length: msg.Length}
 			peer.requestedPieces.cancelRequest(request)
 		}
 	}
@@ -384,7 +371,8 @@ Outer:
 			for block := range blockCount {
 				length := min(blockSize, pieceLength-block*blockSize)
 
-				request := message.EncodeRequest(pieceIdx, block*blockSize, length)
+				message := message.Request{Piece: pieceIdx, Offset: block * blockSize, Length: length}
+				request := (&message).Encode()
 				_, err := peer.connection.Write(request)
 				if err != nil {
 					peer.pendingPieces.remove(pieceIdx)
@@ -399,8 +387,7 @@ Outer:
 func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 	present := peer.pieces.GetBitfield()
 	if !present.IsEmpty() {
-		request := message.EncodeBitfield(&present)
-
+		request := (&message.Bitfield{Bitfield: present.ToBytes()}).Encode()
 		_, err := peer.connection.Write(request)
 		if err != nil {
 			errors <- fmt.Errorf("error sending bitfield: %w", err)
@@ -433,8 +420,7 @@ func (peer *Peer) sendKeepAlive(errors chan<- error) {
 	for {
 		time.Sleep(keepAliveInterval)
 
-		message := message.EncodeKeepAlive()
-
+		message := (&message.KeepAlive{}).Encode()
 		_, err := peer.connection.Write(message)
 		if err != nil {
 			errors <- fmt.Errorf("error sending keep-alive message: %w", err)

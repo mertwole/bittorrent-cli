@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+
+	"github.com/mertwole/bittorrent-cli/bitfield"
 )
 
 const maxPayloadLength = 100_000_000
@@ -28,11 +30,64 @@ type Message struct {
 	Payload []byte
 }
 
+func EncodeChoke() []byte {
+	return (&Message{ID: Choke, Payload: make([]byte, 0)}).encode()
+}
+
+func EncodeUnchoke() []byte {
+	return (&Message{ID: Unchoke, Payload: make([]byte, 0)}).encode()
+}
+
+func EncodeInterested() []byte {
+	return (&Message{ID: Interested, Payload: make([]byte, 0)}).encode()
+}
+
+func EncodeNotInterested() []byte {
+	return (&Message{ID: NotInterested, Payload: make([]byte, 0)}).encode()
+}
+
+func EncodeHave(piece int) []byte {
+	payload := make([]byte, 0)
+	payload = binary.BigEndian.AppendUint32(payload, uint32(piece))
+	return (&Message{ID: Have, Payload: payload}).encode()
+}
+
+func EncodeBitfield(bitfield *bitfield.Bitfield) []byte {
+	return (&Message{ID: Bitfield, Payload: bitfield.ToBytes()}).encode()
+}
+
+func EncodeRequest(piece int, offset int, length int) []byte {
+	payload := make([]byte, 0)
+	payload = binary.BigEndian.AppendUint32(payload, uint32(piece))
+	payload = binary.BigEndian.AppendUint32(payload, uint32(offset))
+	payload = binary.BigEndian.AppendUint32(payload, uint32(length))
+
+	return (&Message{ID: Request, Payload: payload}).encode()
+}
+
+func EncodePiece(piece int, offset int, data []byte) []byte {
+	payload := make([]byte, 0)
+	payload = binary.BigEndian.AppendUint32(payload, uint32(piece))
+	payload = binary.BigEndian.AppendUint32(payload, uint32(offset))
+	payload = append(payload, data...)
+
+	return (&Message{ID: Piece, Payload: payload}).encode()
+}
+
+func EncodeCancel(piece int, offset int, length int) []byte {
+	payload := make([]byte, 0)
+	payload = binary.BigEndian.AppendUint32(payload, uint32(piece))
+	payload = binary.BigEndian.AppendUint32(payload, uint32(offset))
+	payload = binary.BigEndian.AppendUint32(payload, uint32(length))
+
+	return (&Message{ID: Cancel, Payload: payload}).encode()
+}
+
 func EncodeKeepAlive() []byte {
 	return make([]byte, 4)
 }
 
-func (message *Message) Encode() []byte {
+func (message *Message) encode() []byte {
 	length := 1 + len(message.Payload)
 	encoded := make([]byte, 4+length)
 

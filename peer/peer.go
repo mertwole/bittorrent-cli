@@ -384,12 +384,7 @@ Outer:
 			for block := range blockCount {
 				length := min(blockSize, pieceLength-block*blockSize)
 
-				messagePayload := make([]byte, 12)
-				binary.BigEndian.PutUint32(messagePayload[:4], uint32(pieceIdx))         // index
-				binary.BigEndian.PutUint32(messagePayload[4:8], uint32(block*blockSize)) // begin
-				binary.BigEndian.PutUint32(messagePayload[8:12], uint32(length))         // length
-
-				request := (&message.Message{ID: message.Request, Payload: messagePayload}).Encode()
+				request := message.EncodeRequest(pieceIdx, block*blockSize, length)
 				_, err := peer.connection.Write(request)
 				if err != nil {
 					peer.pendingPieces.remove(pieceIdx)
@@ -404,8 +399,7 @@ Outer:
 func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 	present := peer.pieces.GetBitfield()
 	if !present.IsEmpty() {
-		data := present.ToBytes()
-		request := (&message.Message{ID: message.Bitfield, Payload: data}).Encode()
+		request := message.EncodeBitfield(&present)
 
 		_, err := peer.connection.Write(request)
 		if err != nil {

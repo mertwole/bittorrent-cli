@@ -271,11 +271,13 @@ func (peer *Peer) listen(
 		}
 
 		if receivedMessage == nil {
-			// Keep-alive message
+			// No message is received
 			continue
 		}
 
 		switch msg := receivedMessage.(type) {
+		case *message.KeepAlive:
+			continue
 		case *message.Choke:
 			peer.chocked = true
 		case *message.Unchoke:

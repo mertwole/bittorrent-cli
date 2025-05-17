@@ -113,7 +113,7 @@ func (msg *Cancel) Encode() []byte {
 }
 
 func (msg *KeepAlive) Encode() []byte {
-	return make([]byte, 4)
+	return make([]byte, 0)
 }
 
 func (message *message) encode() []byte {
@@ -133,6 +133,10 @@ func Decode(reader io.Reader) (Message, error) {
 	var encodedLength [4]byte
 	_, err := io.ReadFull(reader, encodedLength[:])
 	if err != nil {
+		if err == io.EOF {
+			return nil, nil
+		}
+
 		return nil, fmt.Errorf("failed to read message length: %w", err)
 	}
 
@@ -154,7 +158,7 @@ func Decode(reader io.Reader) (Message, error) {
 
 	var id = messageID(encodedMessageID[0])
 
-	payload := make([]byte, length)
+	payload := make([]byte, length-1)
 	_, err = io.ReadFull(reader, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read message payload: %w", err)

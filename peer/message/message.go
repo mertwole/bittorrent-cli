@@ -8,31 +8,115 @@ import (
 
 const maxPayloadLength = 100_000_000
 
-type MessageID uint8
+type messageID uint8
 
 const (
-	Choke         MessageID = 0
-	Unchoke       MessageID = 1
-	Interested    MessageID = 2
-	NotInterested MessageID = 3
-	Have          MessageID = 4
-	Bitfield      MessageID = 5
-	Request       MessageID = 6
-	Piece         MessageID = 7
-	Cancel        MessageID = 8
-	unsupported   MessageID = 9
+	chokeMsgID         messageID = 0
+	unchokeMsgID       messageID = 1
+	interestedMsgID    messageID = 2
+	notInterestedMsgID messageID = 3
+	haveMsgID          messageID = 4
+	bitfieldMsgID      messageID = 5
+	requestMsgID       messageID = 6
+	pieceMsgID         messageID = 7
+	cancelMsgID        messageID = 8
+	unsupportedMsgID   messageID = 9
 )
 
-type Message struct {
-	ID      MessageID
+type Choke struct{}
+type Unchoke struct{}
+type Interested struct{}
+type NotInterested struct{}
+type Have struct {
+	Piece int
+}
+type Bitfield struct {
+	Bitfield []byte
+}
+type Request struct {
+	Piece  int
+	Offset int
+	Length int
+}
+type Piece struct {
+	Piece  int
+	Offset int
+	Data   []byte
+}
+type Cancel struct {
+	Piece  int
+	Offset int
+	Length int
+}
+type KeepAlive struct{}
+
+type Message interface {
+	Encode() []byte
+}
+
+type message struct {
+	ID      messageID
 	Payload []byte
 }
 
-func EncodeKeepAlive() []byte {
-	return make([]byte, 4)
+func (msg *Choke) Encode() []byte {
+	return (&message{ID: chokeMsgID, Payload: make([]byte, 0)}).encode()
 }
 
-func (message *Message) Encode() []byte {
+func (msg *Unchoke) Encode() []byte {
+	return (&message{ID: unchokeMsgID, Payload: make([]byte, 0)}).encode()
+}
+
+func (msg *Interested) Encode() []byte {
+	return (&message{ID: interestedMsgID, Payload: make([]byte, 0)}).encode()
+}
+
+func (msg *NotInterested) Encode() []byte {
+	return (&message{ID: notInterestedMsgID, Payload: make([]byte, 0)}).encode()
+}
+
+func (msg *Have) Encode() []byte {
+	payload := make([]byte, 0)
+	payload = binary.BigEndian.AppendUint32(payload, uint32(msg.Piece))
+	return (&message{ID: haveMsgID, Payload: payload}).encode()
+}
+
+func (msg *Bitfield) Encode() []byte {
+	return (&message{ID: bitfieldMsgID, Payload: msg.Bitfield}).encode()
+}
+
+func (msg *Request) Encode() []byte {
+	payload := make([]byte, 0)
+	payload = binary.BigEndian.AppendUint32(payload, uint32(msg.Piece))
+	payload = binary.BigEndian.AppendUint32(payload, uint32(msg.Offset))
+	payload = binary.BigEndian.AppendUint32(payload, uint32(msg.Length))
+
+	return (&message{ID: requestMsgID, Payload: payload}).encode()
+}
+
+func (msg *Piece) Encode() []byte {
+	payload := make([]byte, 0)
+	payload = binary.BigEndian.AppendUint32(payload, uint32(msg.Piece))
+	payload = binary.BigEndian.AppendUint32(payload, uint32(msg.Offset))
+	payload = append(payload, msg.Data...)
+
+	return (&message{ID: pieceMsgID, Payload: payload}).encode()
+}
+
+func (msg *Cancel) Encode() []byte {
+	payload := make([]byte, 0)
+	payload = binary.BigEndian.AppendUint32(payload, uint32(msg.Piece))
+	payload = binary.BigEndian.AppendUint32(payload, uint32(msg.Offset))
+	payload = binary.BigEndian.AppendUint32(payload, uint32(msg.Length))
+
+	return (&message{ID: cancelMsgID, Payload: payload}).encode()
+}
+
+func (msg *KeepAlive) Encode() []byte {
+	return make([]byte, 0)
+}
+
+func (message *message) encode() []byte {
 	length := 1 + len(message.Payload)
 	encoded := make([]byte, 4+length)
 
@@ -45,10 +129,14 @@ func (message *Message) Encode() []byte {
 	return encoded
 }
 
-func Decode(reader io.Reader) (*Message, error) {
+func Decode(reader io.Reader) (Message, error) {
 	var encodedLength [4]byte
 	_, err := io.ReadFull(reader, encodedLength[:])
 	if err != nil {
+		if err == io.EOF {
+			return nil, nil
+		}
+
 		return nil, fmt.Errorf("failed to read message length: %w", err)
 	}
 
@@ -59,7 +147,7 @@ func Decode(reader io.Reader) (*Message, error) {
 	}
 
 	if length == 0 {
-		return nil, nil
+		return &KeepAlive{}, nil
 	}
 
 	var encodedMessageID [1]byte
@@ -68,18 +156,44 @@ func Decode(reader io.Reader) (*Message, error) {
 		return nil, fmt.Errorf("failed to read message ID: %w", err)
 	}
 
-	var id = MessageID(encodedMessageID[0])
+	var id = messageID(encodedMessageID[0])
 
-	if id >= unsupported {
-		return nil, fmt.Errorf("invalid message ID: %d", id)
-	}
-
-	message := Message{ID: id, Payload: make([]byte, length-1)}
-
-	_, err = io.ReadFull(reader, message.Payload)
+	payload := make([]byte, length-1)
+	_, err = io.ReadFull(reader, payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read message payload: %w", err)
 	}
 
-	return &message, nil
+	switch id {
+	case chokeMsgID:
+		return &Choke{}, nil
+	case unchokeMsgID:
+		return &Unchoke{}, nil
+	case interestedMsgID:
+		return &Interested{}, nil
+	case notInterestedMsgID:
+		return &NotInterested{}, nil
+	case haveMsgID:
+		piece := binary.BigEndian.Uint32(payload[:4])
+		return &Have{Piece: int(piece)}, nil
+	case bitfieldMsgID:
+		return &Bitfield{Bitfield: payload}, nil
+	case requestMsgID:
+		piece := binary.BigEndian.Uint32(payload[:4])
+		offset := binary.BigEndian.Uint32(payload[4:8])
+		length := binary.BigEndian.Uint32(payload[8:12])
+		return &Request{Piece: int(piece), Offset: int(offset), Length: int(length)}, nil
+	case pieceMsgID:
+		piece := binary.BigEndian.Uint32(payload[:4])
+		offset := binary.BigEndian.Uint32(payload[4:8])
+		data := payload[8:]
+		return &Piece{Piece: int(piece), Offset: int(offset), Data: data}, nil
+	case cancelMsgID:
+		piece := binary.BigEndian.Uint32(payload[:4])
+		offset := binary.BigEndian.Uint32(payload[4:8])
+		length := binary.BigEndian.Uint32(payload[8:12])
+		return &Cancel{Piece: int(piece), Offset: int(offset), Length: int(length)}, nil
+	default:
+		return nil, fmt.Errorf("invalid message ID: %d", id)
+	}
 }

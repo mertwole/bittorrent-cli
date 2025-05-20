@@ -20,19 +20,14 @@ import (
 
 const discoveredPeersQueueSize = 16
 
+const logFileName = "log"
+
 var torrentFileName = flag.String("torrent", "./data/torrent.torrent", "Path to the .torrent file")
 var downloadFolderName = flag.String("download", "./data", "Path to the download folder")
+var interactiveMode = flag.Bool("interactive", true, "Whether the client should be run in an interactive mode")
 
 func main() {
 	flag.Parse()
-
-	logFile, err := os.OpenFile("log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
-	if err != nil {
-		log.Fatalf("error opening log file: %v", err)
-	}
-	defer logFile.Close()
-
-	log.SetOutput(logFile)
 
 	torrentFile, err := os.Open(*torrentFileName)
 	if err != nil {
@@ -53,7 +48,17 @@ func main() {
 
 	pieces := pieces.New(len(torrentInfo.Pieces), &donePieces)
 
-	go StartUI(pieces)
+	if *interactiveMode {
+		logFile, err := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+		if err != nil {
+			log.Fatalf("error opening log file: %v", err)
+		}
+		defer logFile.Close()
+
+		log.SetOutput(logFile)
+
+		go StartUI(pieces)
+	}
 
 	peerID := [20]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 

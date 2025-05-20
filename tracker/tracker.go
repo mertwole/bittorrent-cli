@@ -19,6 +19,9 @@ import (
 const maxAnnounceResponseLength = 1024
 const udpReadTimeout = time.Second * 5
 
+const URLDataOption = 0x2
+const EndOfOptions = 0x0
+
 type TrackerResponse struct {
 	Interval int
 	Peers    []PeerInfo
@@ -74,6 +77,8 @@ func (tracker *Tracker) ListenForPeers(peers chan<- PeerInfo) {
 
 			continue
 		}
+
+		log.Printf("Discovered %d peers", len(response.Peers))
 
 		tracker.interval = time.Second * time.Duration(response.Interval)
 		for _, peer := range response.Peers {
@@ -188,7 +193,19 @@ func sendUDPRequest(
 		)
 	}
 
-	trackerResponse, err := sendUDPAnnounceRequest(conn, transcactionID, connectionID, announceRequest)
+	leadingSlash := ""
+	if len(address.Path) != 0 && address.Path[0] != '/' {
+		leadingSlash = "/"
+	}
+	urlData := leadingSlash + address.Path + address.Query().Encode()
+
+	trackerResponse, err := sendUDPAnnounceRequest(
+		conn,
+		transcactionID,
+		connectionID,
+		announceRequest,
+		urlData,
+	)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"failed to send announce request to the UDP tracker %s: %w",
@@ -246,6 +263,7 @@ func sendUDPAnnounceRequest(
 	transactionID uint32,
 	connectionID uint64,
 	announceRequest *announceRequest,
+	urlData string,
 ) (*TrackerResponse, error) {
 	var port uint16 = 6889
 	var key uint32 = 0xAABBCCDD
@@ -264,7 +282,7 @@ func sendUDPAnnounceRequest(
 	// 88      32-bit integer  	key
 	// 92      32-bit integer  	num_want        -1 // default
 	// 96      16-bit integer  	port
-	// 98
+	// 98	   Variable			extensions
 
 	request := make([]byte, 98)
 
@@ -281,6 +299,9 @@ func sendUDPAnnounceRequest(
 	binary.BigEndian.PutUint32(request[88:92], key)
 	copy(request[92:96], []byte{0xFF, 0xFF, 0xFF, 0xFF}) // num_want: default: -1
 	binary.BigEndian.PutUint16(request[96:98], port)
+
+	encodedURLData := encodeURLData(urlData)
+	request = append(request, encodedURLData...)
 
 	_, err := connection.Write(request)
 	if err != nil {
@@ -339,4 +360,21 @@ func sendUDPAnnounceRequest(
 	}
 
 	return decodedResponse, nil
+}
+
+func encodeURLData(urlData string) []byte {
+	if len(urlData) == 0 {
+		return make([]byte, 0)
+	}
+
+	result := make([]byte, 2)
+	result[0] = URLDataOption
+	if len(urlData) >= 256 {
+		log.Panicf("unsupported url data length: expected <= 255, got %d", len(urlData))
+	}
+	result[1] = byte(len(urlData))
+
+	result = append(result, []byte(urlData)...)
+
+	return append(result, EndOfOptions)
 }

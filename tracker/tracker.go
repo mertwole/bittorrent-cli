@@ -112,7 +112,7 @@ func sendHTTPRequest(
 	address *url.URL,
 	announceRequest *announceRequest,
 ) (*TrackerResponse, error) {
-	Port := 6882
+	Port := 6881
 
 	address.RawQuery = url.Values{
 		"info_hash":  []string{string(announceRequest.infoHash[:])},
@@ -265,7 +265,7 @@ func sendUDPAnnounceRequest(
 	announceRequest *announceRequest,
 	urlData string,
 ) (*TrackerResponse, error) {
-	var port uint16 = 6889
+	var port uint16 = 6881
 	var key uint32 = 0xAABBCCDD
 
 	// Offset  Size    			Name    		Value

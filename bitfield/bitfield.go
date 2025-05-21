@@ -54,6 +54,14 @@ func (bitfield *Bitfield) ContainsPiece(piece int) bool {
 	return bitfield.data[byteIdx]&(1<<(7-bitIdx)) != 0
 }
 
+func (bitfield *Bitfield) Subtract(other *Bitfield) Bitfield {
+	result := *bitfield
+	for i := range len(bitfield.data) {
+		result.data[i] = bitfield.data[i] & (^other.data[i])
+	}
+	return result
+}
+
 type ConcurrentBitfield struct {
 	inner Bitfield
 	mutex sync.RWMutex

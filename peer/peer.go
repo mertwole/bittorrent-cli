@@ -228,6 +228,11 @@ func (peer *Peer) StartExchange(
 	peer.pieces = pieces
 	peer.pendingPieces = newPendingPieces()
 
+	err := peer.sendInitialMessages()
+	if err != nil {
+		return fmt.Errorf("failed to send initial messages: %w", err)
+	}
+
 	notifyPresentPiecesErrors := make(chan error)
 	go peer.notifyPresentPieces(notifyPresentPiecesErrors)
 
@@ -391,14 +396,13 @@ Outer:
 	}
 }
 
-func (peer *Peer) notifyPresentPieces(errors chan<- error) {
+func (peer *Peer) sendInitialMessages() error {
 	present := peer.pieces.GetBitfield()
 	if !present.IsEmpty() {
 		request := (&message.Bitfield{Bitfield: present.ToBytes()}).Encode()
 		_, err := peer.connection.Write(request)
 		if err != nil {
-			errors <- fmt.Errorf("error sending bitfield: %w", err)
-			return
+			return fmt.Errorf("error sending bitfield: %w", err)
 		}
 
 		log.Printf("sent bitfield message")
@@ -406,13 +410,16 @@ func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 		request = (&message.Unchoke{}).Encode()
 		_, err = peer.connection.Write(request)
 		if err != nil {
-			errors <- fmt.Errorf("error sending unchoke message: %w", err)
-			return
+			return fmt.Errorf("error sending unchoke message: %w", err)
 		}
 
 		log.Printf("sent unchoke message")
 	}
 
+	return nil
+}
+
+func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 	for {
 		time.Sleep(time.Second)
 		// TODO: Send have messages

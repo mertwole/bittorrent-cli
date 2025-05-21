@@ -93,9 +93,9 @@ func (tracker *Tracker) sendRequest() (*TrackerResponse, error) {
 	announceRequest := announceRequest{
 		infoHash:   tracker.infoHash,
 		peerID:     peerID,
-		downloaded: 0,
+		downloaded: 4096,
 		uploaded:   0,
-		left:       uint64(tracker.length),
+		left:       0,
 	}
 
 	switch tracker.url.Scheme {

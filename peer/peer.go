@@ -227,6 +227,9 @@ func (peer *Peer) StartExchange(
 	peer.pieces = pieces
 	peer.pendingPieces = newPendingPieces()
 
+	notifyPresentPiecesErrors := make(chan error)
+	go peer.notifyPresentPieces(notifyPresentPiecesErrors)
+
 	sendKeepAliveErrors := make(chan error)
 	go peer.sendKeepAlive(sendKeepAliveErrors)
 
@@ -235,9 +238,6 @@ func (peer *Peer) StartExchange(
 
 	listenErrors := make(chan error)
 	go peer.listen(torrent, downloadedPieces, listenErrors)
-
-	notifyPresentPiecesErrors := make(chan error)
-	go peer.notifyPresentPieces(notifyPresentPiecesErrors)
 
 	uploadPiecesErrors := make(chan error)
 	go peer.uploadPieces(uploadPiecesErrors)
@@ -274,6 +274,8 @@ func (peer *Peer) listen(
 			// No message is received
 			continue
 		}
+
+		log.Printf("Received message: %T", receivedMessage)
 
 		switch msg := receivedMessage.(type) {
 		case *message.KeepAlive:
@@ -395,6 +397,17 @@ func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 			errors <- fmt.Errorf("error sending bitfield: %w", err)
 			return
 		}
+
+		log.Printf("sent bitfield message")
+
+		request = (&message.Unchoke{}).Encode()
+		_, err = peer.connection.Write(request)
+		if err != nil {
+			errors <- fmt.Errorf("error sending unchoke message: %w", err)
+			return
+		}
+
+		log.Printf("sent unchoke message")
 	}
 
 	for {

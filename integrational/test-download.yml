@@ -23,8 +23,6 @@ services:
     build:
       context: ./
       dockerfile: ./transmission-cli-seed.Dockerfile
-    tmpfs:
-      - /tmp
     networks:
       swarm:
         ipv4_address: 10.5.0.200

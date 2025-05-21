@@ -39,14 +39,14 @@ func main() {
 		log.Fatal("Failed to decode torrent file: ", err)
 	}
 
-	downloadedPiecesChannel, donePieces, err := download.Start(torrentInfo, *downloadFolderName)
+	downloadedPieces, downloadStatus, err := download.NewDownload(torrentInfo, *downloadFolderName)
 	if err != nil {
 		log.Fatal("Failed to start download service: ", err)
 	}
 
-	log.Printf("Discovered %d already downloaded pieces", len(donePieces))
+	log.Printf("Discovered %d already downloaded pieces", len(downloadStatus.DonePieces))
 
-	pieces := pieces.New(len(torrentInfo.Pieces), &donePieces)
+	pieces := pieces.New(len(torrentInfo.Pieces), &downloadStatus.DonePieces)
 
 	if *interactiveMode {
 		logFile, err := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
@@ -82,7 +82,7 @@ func main() {
 
 		if !alreadyKnown {
 			knownPeers = append(knownPeers, newPeer)
-			go downloadFromPeer(&newPeer, torrentInfo, pieces, downloadedPiecesChannel)
+			go downloadFromPeer(&newPeer, torrentInfo, pieces, downloadedPieces)
 		}
 	}
 }
@@ -164,7 +164,7 @@ func (screen mainScreen) View() string {
 }
 
 func composeDownloadedPiecesString(downloadedPieces *bitfield.Bitfield, targetLength int) string {
-	pieceCount := downloadedPieces.Length()
+	pieceCount := downloadedPieces.PieceCount()
 
 	str := ""
 	for block := range targetLength {
@@ -213,7 +213,7 @@ func downloadFromPeer(
 	peerInfo *tracker.PeerInfo,
 	torrentInfo *torrent_info.TorrentInfo,
 	pieces *pieces.Pieces,
-	downloadedPiecesChannel chan<- download.DownloadedPiece,
+	downloadedPieces *download.Download,
 ) {
 	for {
 		peer := peer.Peer{}
@@ -231,7 +231,7 @@ func downloadFromPeer(
 
 		log.Printf("connected to the peer %+v", peerInfo)
 
-		err = peer.StartExchange(torrentInfo, pieces, downloadedPiecesChannel)
+		err = peer.StartExchange(torrentInfo, pieces, downloadedPieces)
 		if err != nil {
 			log.Printf("Failed to download data from peer: %v. reconnecting", err)
 		}

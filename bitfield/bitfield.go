@@ -3,20 +3,20 @@ package bitfield
 import "sync"
 
 type Bitfield struct {
-	data   []byte
-	length int
+	data       []byte
+	pieceCount int
 }
 
-func NewBitfield(data []byte, length int) Bitfield {
-	return Bitfield{data: data, length: length}
+func NewBitfield(data []byte, pieceCount int) Bitfield {
+	return Bitfield{data: data, pieceCount: pieceCount}
 }
 
 func NewEmptyBitfield(pieceCount int) Bitfield {
-	return Bitfield{data: make([]byte, (pieceCount+7)/8), length: pieceCount}
+	return Bitfield{data: make([]byte, (pieceCount+7)/8), pieceCount: pieceCount}
 }
 
-func (bitfield *Bitfield) Length() int {
-	return bitfield.length
+func (bitfield *Bitfield) PieceCount() int {
+	return bitfield.pieceCount
 }
 
 func (bitfield *Bitfield) IsEmpty() bool {
@@ -54,13 +54,32 @@ func (bitfield *Bitfield) ContainsPiece(piece int) bool {
 	return bitfield.data[byteIdx]&(1<<(7-bitIdx)) != 0
 }
 
+func (bitfield *Bitfield) Subtract(other *Bitfield) Bitfield {
+	result := *bitfield
+	for i := range len(bitfield.data) {
+		result.data[i] = bitfield.data[i] & (^other.data[i])
+	}
+	return result
+}
+
 type ConcurrentBitfield struct {
 	inner Bitfield
 	mutex sync.RWMutex
 }
 
-func NewConcurrentBitfield(data []byte, length int) *ConcurrentBitfield {
-	return &ConcurrentBitfield{inner: NewBitfield(data, length)}
+func NewConcurrentBitfield(data []byte, pieceCount int) *ConcurrentBitfield {
+	return &ConcurrentBitfield{inner: NewBitfield(data, pieceCount)}
+}
+
+func NewEmptyConcurrentBitfield(pieceCount int) *ConcurrentBitfield {
+	return &ConcurrentBitfield{inner: NewEmptyBitfield(pieceCount)}
+}
+
+func (bitfield *ConcurrentBitfield) GetBitfield() Bitfield {
+	bitfield.mutex.RLock()
+	defer bitfield.mutex.RUnlock()
+
+	return bitfield.inner
 }
 
 func (bitfield *ConcurrentBitfield) AddPiece(piece int) {

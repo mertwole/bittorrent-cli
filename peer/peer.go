@@ -24,6 +24,8 @@ const keepAliveInterval = time.Second * 120
 const pendingPiecesQueueLength = 5
 const pieceRequestTimeout = time.Second * 120
 const blockSize = 1 << 14
+const requestedPiecesPopInterval = time.Millisecond * 100
+const notifyPresentPiecesInterval = time.Millisecond * 100
 
 type Peer struct {
 	info            tracker.PeerInfo
@@ -220,12 +222,18 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 func (peer *Peer) StartExchange(
 	torrent *torrent_info.TorrentInfo,
 	pieces *pieces.Pieces,
-	downloadedPieces chan<- download.DownloadedPiece,
+	downloadedPieces *download.Download,
 ) error {
 	// TODO: Cancel goroutines when error occured and cleanup the pendingPieces.
 
 	peer.pieces = pieces
 	peer.pendingPieces = newPendingPieces()
+	peer.availablePieces = bitfield.NewEmptyConcurrentBitfield(len(torrent.Pieces))
+
+	err := peer.sendInitialMessages()
+	if err != nil {
+		return fmt.Errorf("failed to send initial messages: %w", err)
+	}
 
 	notifyPresentPiecesErrors := make(chan error)
 	go peer.notifyPresentPieces(notifyPresentPiecesErrors)
@@ -240,7 +248,7 @@ func (peer *Peer) StartExchange(
 	go peer.listen(torrent, downloadedPieces, listenErrors)
 
 	uploadPiecesErrors := make(chan error)
-	go peer.uploadPieces(uploadPiecesErrors)
+	go peer.uploadPieces(downloadedPieces, uploadPiecesErrors)
 
 	go peer.checkStalePieceRequests()
 
@@ -260,7 +268,7 @@ func (peer *Peer) StartExchange(
 
 func (peer *Peer) listen(
 	torrent *torrent_info.TorrentInfo,
-	downloadedPieces chan<- download.DownloadedPiece,
+	downloadedPieces *download.Download,
 	errors chan<- error,
 ) {
 	for {
@@ -274,8 +282,6 @@ func (peer *Peer) listen(
 			// No message is received
 			continue
 		}
-
-		log.Printf("Received message: %T", receivedMessage)
 
 		switch msg := receivedMessage.(type) {
 		case *message.KeepAlive:
@@ -320,7 +326,9 @@ func (peer *Peer) listen(
 					newState = pieces.NotDownloaded
 				} else {
 					globalOffset := int(msg.Piece) * torrent.PieceLength
-					downloadedPieces <- download.DownloadedPiece{Offset: globalOffset, Data: donePiece.data}
+					downloadedPieces.WritePiece(
+						download.DownloadedPiece{Offset: globalOffset, Data: donePiece.data},
+					)
 
 					newState = pieces.Downloaded
 				}
@@ -388,36 +396,79 @@ Outer:
 	}
 }
 
-func (peer *Peer) notifyPresentPieces(errors chan<- error) {
+func (peer *Peer) sendInitialMessages() error {
 	present := peer.pieces.GetBitfield()
 	if !present.IsEmpty() {
 		request := (&message.Bitfield{Bitfield: present.ToBytes()}).Encode()
 		_, err := peer.connection.Write(request)
 		if err != nil {
-			errors <- fmt.Errorf("error sending bitfield: %w", err)
-			return
+			return fmt.Errorf("error sending bitfield: %w", err)
 		}
 
 		log.Printf("sent bitfield message")
-
-		request = (&message.Unchoke{}).Encode()
-		_, err = peer.connection.Write(request)
-		if err != nil {
-			errors <- fmt.Errorf("error sending unchoke message: %w", err)
-			return
-		}
-
-		log.Printf("sent unchoke message")
 	}
 
+	request := (&message.Unchoke{}).Encode()
+	_, err := peer.connection.Write(request)
+	if err != nil {
+		return fmt.Errorf("error sending unchoke message: %w", err)
+	}
+
+	log.Printf("sent unchoke message")
+
+	return nil
+}
+
+func (peer *Peer) notifyPresentPieces(errors chan<- error) {
+	availability := peer.pieces.GetBitfield()
+
 	for {
-		time.Sleep(time.Second)
-		// TODO: Send have messages
+		currentAvailability := peer.pieces.GetBitfield()
+		newAvailable := currentAvailability.Subtract(&availability)
+
+		if newAvailable.IsEmpty() {
+			time.Sleep(notifyPresentPiecesInterval)
+			continue
+		}
+
+		availability = currentAvailability
+
+		for piece := range newAvailable.PieceCount() {
+			if newAvailable.ContainsPiece(piece) {
+				message := message.Have{Piece: piece}
+				_, err := peer.connection.Write(message.Encode())
+				if err != nil {
+					errors <- fmt.Errorf("error sending have message: %w", err)
+					break
+				}
+			}
+		}
 	}
 }
 
-func (peer *Peer) uploadPieces(errors chan<- error) {
-	// TODO
+func (peer *Peer) uploadPieces(downloadedPieces *download.Download, errors chan<- error) {
+	for {
+		requestedPiece := peer.requestedPieces.popRequest()
+		if requestedPiece == nil {
+			time.Sleep(requestedPiecesPopInterval)
+			continue
+		}
+
+		pieceData, err := downloadedPieces.ReadPiece(requestedPiece.piece)
+		if err != nil {
+			errors <- fmt.Errorf("failed to read piece #%d: %w", requestedPiece.piece, err)
+		}
+
+		// TODO: Add method to partially read piece.
+		block := (*pieceData)[requestedPiece.offset : requestedPiece.offset+requestedPiece.length]
+
+		message := message.Piece{Piece: requestedPiece.piece, Offset: requestedPiece.offset, Data: block}
+		_, err = peer.connection.Write(message.Encode())
+		if err != nil {
+			errors <- fmt.Errorf("error sending piece message: %w", err)
+			break
+		}
+	}
 }
 
 func (peer *Peer) checkStalePieceRequests() {

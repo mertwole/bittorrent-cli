@@ -3,44 +3,25 @@ package download
 import (
 	"crypto/sha1"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/mertwole/bittorrent-cli/torrent_info"
 )
+
+const initialWriteChunkSize = 1024
 
 type DownloadedPiece struct {
 	Offset int
 	Data   []byte
 }
 
-const initialWriteChunkSize = 1024
-
-func Start(torrent *torrent_info.TorrentInfo, targetFolder string) (chan<- DownloadedPiece, []int, error) {
-	downloadedFiles := newDownloadedFiles(torrent, targetFolder)
-
-	err := downloadedFiles.createOrOpenAll()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create or open downloaded files: %w", err)
-	}
-
-	donePieces, err := downloadedFiles.scanDonePieces()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to scan downloaded files for already downloaded pieces: %w", err)
-	}
-
-	pieces := make(chan DownloadedPiece)
-
-	go writePieces(downloadedFiles, pieces)
-
-	return pieces, donePieces, nil
-}
-
-type downloadedFiles struct {
+type Download struct {
 	files       []downloadedFile
 	pieceLength int
 	pieceHashes [][sha1.Size]byte
+	mutex       sync.RWMutex
 }
 
 type downloadedFile struct {
@@ -49,8 +30,100 @@ type downloadedFile struct {
 	handle *os.File
 }
 
-func newDownloadedFiles(torrent *torrent_info.TorrentInfo, targetFolder string) *downloadedFiles {
-	downloadedFiles := downloadedFiles{pieceLength: torrent.PieceLength, pieceHashes: torrent.Pieces}
+type DownloadStatus struct {
+	DonePieces []int
+}
+
+func NewDownload(torrent *torrent_info.TorrentInfo, targetFolder string) (*Download, *DownloadStatus, error) {
+	download := newDownloadInner(torrent, targetFolder)
+
+	err := download.createOrOpenAll()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create or open downloaded files: %w", err)
+	}
+
+	donePieces, err := download.scanDonePieces()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to scan downloaded files for already downloaded pieces: %w", err)
+	}
+
+	status := &DownloadStatus{DonePieces: donePieces}
+
+	return download, status, nil
+}
+
+func (files *Download) ReadPiece(piece int) (*[]byte, error) {
+	offset := piece * files.pieceLength
+
+	currentOffset := 0
+	bytesRead := 0
+	readData := make([]byte, 0)
+
+	for _, file := range files.files {
+		if file.length+currentOffset > offset {
+			bytesToRead := min(files.pieceLength-bytesRead, file.length+currentOffset-offset)
+			readBytes := make([]byte, bytesToRead)
+
+			readOffset := int64(max(0, offset-currentOffset))
+
+			files.mutex.RLock()
+			_, err := file.handle.ReadAt(readBytes, readOffset)
+			files.mutex.RUnlock()
+
+			if err != nil {
+				return nil, fmt.Errorf("failed to read from file %s: %w", file.path, err)
+			}
+			readData = append(readData, readBytes...)
+
+			bytesRead += bytesToRead
+			if bytesRead >= files.pieceLength {
+				break
+			}
+		}
+
+		currentOffset += file.length
+	}
+
+	return &readData, nil
+}
+
+func (files *Download) WritePiece(piece DownloadedPiece) error {
+	currentOffset := 0
+	bytesWritten := 0
+	for _, file := range files.files {
+		if file.length+currentOffset > piece.Offset {
+			bytesToWrite := min(len(piece.Data)-bytesWritten, file.length+currentOffset-piece.Offset)
+
+			writeOffset := int64(max(0, piece.Offset-currentOffset))
+
+			files.mutex.Lock()
+			_, err := file.handle.WriteAt((piece.Data)[bytesWritten:bytesWritten+bytesToWrite], writeOffset)
+			files.mutex.Unlock()
+
+			if err != nil {
+				return fmt.Errorf("failed to write to file %s: %w", file.path, err)
+			}
+
+			bytesWritten += bytesToWrite
+			if bytesWritten >= len(piece.Data) {
+				break
+			}
+		}
+
+		currentOffset += file.length
+	}
+
+	return nil
+}
+
+func (files *Download) Finalize() {
+	for _, file := range files.files {
+		file.handle.Close()
+	}
+}
+
+func newDownloadInner(torrent *torrent_info.TorrentInfo, targetFolder string) *Download {
+	downloadedFiles := Download{pieceLength: torrent.PieceLength, pieceHashes: torrent.Pieces}
 
 	if len(torrent.Files) == 0 {
 		path := filepath.Join(targetFolder, torrent.Name)
@@ -71,7 +144,7 @@ func newDownloadedFiles(torrent *torrent_info.TorrentInfo, targetFolder string) 
 	return &downloadedFiles
 }
 
-func (files *downloadedFiles) createOrOpenAll() error {
+func (files *Download) createOrOpenAll() error {
 	for i, file := range files.files {
 		fileHandle, err := createOrOpenFile(file.path, file.length)
 		if err != nil {
@@ -116,11 +189,11 @@ func createOrOpenFile(path string, expectedLength int) (*os.File, error) {
 	return file, nil
 }
 
-func (files *downloadedFiles) scanDonePieces() ([]int, error) {
+func (files *Download) scanDonePieces() ([]int, error) {
 	donePieces := make([]int, 0)
 
 	for i, pieceHash := range files.pieceHashes {
-		piece, err := files.readPiece(i)
+		piece, err := files.ReadPiece(i)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read piece #%d: %w", i, err)
 		}
@@ -132,81 +205,4 @@ func (files *downloadedFiles) scanDonePieces() ([]int, error) {
 	}
 
 	return donePieces, nil
-}
-
-func (files *downloadedFiles) readPiece(piece int) (*[]byte, error) {
-	offset := piece * files.pieceLength
-
-	currentOffset := 0
-	bytesRead := 0
-	readData := make([]byte, 0)
-
-	for _, file := range files.files {
-		if file.length+currentOffset > offset {
-			bytesToRead := min(files.pieceLength-bytesRead, file.length+currentOffset-offset)
-			readBytes := make([]byte, bytesToRead)
-
-			readOffset := int64(max(0, offset-currentOffset))
-
-			_, err := file.handle.ReadAt(readBytes, readOffset)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read from file %s: %w", file.path, err)
-			}
-			readData = append(readData, readBytes...)
-
-			bytesRead += bytesToRead
-			if bytesRead >= files.pieceLength {
-				break
-			}
-		}
-
-		currentOffset += file.length
-	}
-
-	return &readData, nil
-}
-
-func (files *downloadedFiles) writePiece(offset int, data *[]byte) error {
-	currentOffset := 0
-	bytesWritten := 0
-	for _, file := range files.files {
-		if file.length+currentOffset > offset {
-			bytesToWrite := min(len(*data)-bytesWritten, file.length+currentOffset-offset)
-
-			writeOffset := int64(max(0, offset-currentOffset))
-
-			_, err := file.handle.WriteAt((*data)[bytesWritten:bytesWritten+bytesToWrite], writeOffset)
-			if err != nil {
-				return fmt.Errorf("failed to write to file %s: %w", file.path, err)
-			}
-
-			bytesWritten += bytesToWrite
-			if bytesWritten >= len(*data) {
-				break
-			}
-		}
-
-		currentOffset += file.length
-	}
-
-	return nil
-}
-
-func (files *downloadedFiles) closeAll() {
-	for _, file := range files.files {
-		file.handle.Close()
-	}
-}
-
-func writePieces(files *downloadedFiles, pieces <-chan DownloadedPiece) {
-	defer files.closeAll()
-
-	for {
-		piece := <-pieces
-
-		err := files.writePiece(piece.Offset, &piece.Data)
-		if err != nil {
-			log.Fatalf("failed to write to the download file: %v", err)
-		}
-	}
 }

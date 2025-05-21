@@ -7,8 +7,8 @@ type Bitfield struct {
 	pieceCount int
 }
 
-func NewBitfield(data []byte, length int) Bitfield {
-	return Bitfield{data: data, pieceCount: length}
+func NewBitfield(data []byte, pieceCount int) Bitfield {
+	return Bitfield{data: data, pieceCount: pieceCount}
 }
 
 func NewEmptyBitfield(pieceCount int) Bitfield {
@@ -67,8 +67,8 @@ type ConcurrentBitfield struct {
 	mutex sync.RWMutex
 }
 
-func NewConcurrentBitfield(data []byte, length int) *ConcurrentBitfield {
-	return &ConcurrentBitfield{inner: NewBitfield(data, length)}
+func NewConcurrentBitfield(data []byte, pieceCount int) *ConcurrentBitfield {
+	return &ConcurrentBitfield{inner: NewBitfield(data, pieceCount)}
 }
 
 func NewEmptyConcurrentBitfield(pieceCount int) *ConcurrentBitfield {

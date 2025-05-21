@@ -406,24 +406,32 @@ func (peer *Peer) sendInitialMessages() error {
 		}
 
 		log.Printf("sent bitfield message")
-
-		request = (&message.Unchoke{}).Encode()
-		_, err = peer.connection.Write(request)
-		if err != nil {
-			return fmt.Errorf("error sending unchoke message: %w", err)
-		}
-
-		log.Printf("sent unchoke message")
 	}
+
+	request := (&message.Unchoke{}).Encode()
+	_, err := peer.connection.Write(request)
+	if err != nil {
+		return fmt.Errorf("error sending unchoke message: %w", err)
+	}
+
+	log.Printf("sent unchoke message")
+
+	request = (&message.Interested{}).Encode()
+	_, err = peer.connection.Write(request)
+	if err != nil {
+		return fmt.Errorf("error sending interested message: %w", err)
+	}
+
+	log.Printf("sent interested message")
 
 	return nil
 }
 
 func (peer *Peer) notifyPresentPieces(errors chan<- error) {
-	availability := peer.availablePieces.GetBitfield()
+	availability := peer.pieces.GetBitfield()
 
 	for {
-		currentAvailability := peer.availablePieces.GetBitfield()
+		currentAvailability := peer.pieces.GetBitfield()
 		newAvailable := currentAvailability.Subtract(&availability)
 
 		if newAvailable.IsEmpty() {

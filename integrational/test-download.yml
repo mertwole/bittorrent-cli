@@ -3,9 +3,11 @@ services:
     build:
       context: ../
       dockerfile: ./Dockerfile
-    command: --interactive=false --torrent=./torrent/torrent.torrent --download=./data
+    command: --interactive=false --torrent=/torrent/torrent.torrent --download=/tmp
     volumes:
       - ./torrent:/torrent
+    tmpfs:
+      - /tmp
     networks:
       swarm:
         ipv4_address: 10.5.0.100
@@ -21,6 +23,8 @@ services:
     build:
       context: ./
       dockerfile: ./transmission-cli-seed.Dockerfile
+    tmpfs:
+      - /tmp
     networks:
       swarm:
         ipv4_address: 10.5.0.200
@@ -47,7 +51,7 @@ services:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider tracker:8000/stats || exit 1"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
 networks:
   swarm:

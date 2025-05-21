@@ -433,7 +433,7 @@ func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 
 		availability = currentAvailability
 
-		for piece := range newAvailable.Length() {
+		for piece := range newAvailable.PieceCount() {
 			if newAvailable.ContainsPiece(piece) {
 				message := message.Have{Piece: piece}
 				_, err := peer.connection.Write(message.Encode())

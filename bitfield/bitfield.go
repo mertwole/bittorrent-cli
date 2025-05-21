@@ -3,22 +3,20 @@ package bitfield
 import "sync"
 
 type Bitfield struct {
-	data []byte
-	// TODO: Rename to pieceCount
-	length int
+	data       []byte
+	pieceCount int
 }
 
 func NewBitfield(data []byte, length int) Bitfield {
-	return Bitfield{data: data, length: length}
+	return Bitfield{data: data, pieceCount: length}
 }
 
 func NewEmptyBitfield(pieceCount int) Bitfield {
-	return Bitfield{data: make([]byte, (pieceCount+7)/8), length: pieceCount}
+	return Bitfield{data: make([]byte, (pieceCount+7)/8), pieceCount: pieceCount}
 }
 
-// TODO: Rename to PieceCount
-func (bitfield *Bitfield) Length() int {
-	return bitfield.length
+func (bitfield *Bitfield) PieceCount() int {
+	return bitfield.pieceCount
 }
 
 func (bitfield *Bitfield) IsEmpty() bool {

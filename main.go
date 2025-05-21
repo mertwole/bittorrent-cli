@@ -164,7 +164,7 @@ func (screen mainScreen) View() string {
 }
 
 func composeDownloadedPiecesString(downloadedPieces *bitfield.Bitfield, targetLength int) string {
-	pieceCount := downloadedPieces.Length()
+	pieceCount := downloadedPieces.PieceCount()
 
 	str := ""
 	for block := range targetLength {

@@ -63,6 +63,10 @@ func NewConcurrentBitfield(data []byte, length int) *ConcurrentBitfield {
 	return &ConcurrentBitfield{inner: NewBitfield(data, length)}
 }
 
+func NewEmptyConcurrentBitfield(pieceCount int) *ConcurrentBitfield {
+	return &ConcurrentBitfield{inner: NewEmptyBitfield(pieceCount)}
+}
+
 func (bitfield *ConcurrentBitfield) AddPiece(piece int) {
 	bitfield.mutex.Lock()
 	defer bitfield.mutex.Unlock()

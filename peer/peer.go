@@ -227,6 +227,7 @@ func (peer *Peer) StartExchange(
 
 	peer.pieces = pieces
 	peer.pendingPieces = newPendingPieces()
+	peer.availablePieces = bitfield.NewEmptyConcurrentBitfield(len(torrent.Pieces))
 
 	err := peer.sendInitialMessages()
 	if err != nil {
@@ -280,8 +281,6 @@ func (peer *Peer) listen(
 			// No message is received
 			continue
 		}
-
-		log.Printf("Received message: %T", receivedMessage)
 
 		switch msg := receivedMessage.(type) {
 		case *message.KeepAlive:

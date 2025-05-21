@@ -221,7 +221,7 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 func (peer *Peer) StartExchange(
 	torrent *torrent_info.TorrentInfo,
 	pieces *pieces.Pieces,
-	downloadedPieces chan<- download.DownloadedPiece,
+	downloadedPieces *download.Download,
 ) error {
 	// TODO: Cancel goroutines when error occured and cleanup the pendingPieces.
 
@@ -241,7 +241,7 @@ func (peer *Peer) StartExchange(
 	go peer.listen(torrent, downloadedPieces, listenErrors)
 
 	uploadPiecesErrors := make(chan error)
-	go peer.uploadPieces(uploadPiecesErrors)
+	go peer.uploadPieces(downloadedPieces, uploadPiecesErrors)
 
 	go peer.checkStalePieceRequests()
 
@@ -261,7 +261,7 @@ func (peer *Peer) StartExchange(
 
 func (peer *Peer) listen(
 	torrent *torrent_info.TorrentInfo,
-	downloadedPieces chan<- download.DownloadedPiece,
+	downloadedPieces *download.Download,
 	errors chan<- error,
 ) {
 	for {
@@ -321,7 +321,9 @@ func (peer *Peer) listen(
 					newState = pieces.NotDownloaded
 				} else {
 					globalOffset := int(msg.Piece) * torrent.PieceLength
-					downloadedPieces <- download.DownloadedPiece{Offset: globalOffset, Data: donePiece.data}
+					downloadedPieces.WritePiece(
+						download.DownloadedPiece{Offset: globalOffset, Data: donePiece.data},
+					)
 
 					newState = pieces.Downloaded
 				}
@@ -417,14 +419,28 @@ func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 	}
 }
 
-func (peer *Peer) uploadPieces(errors chan<- error) {
+func (peer *Peer) uploadPieces(downloadedPieces *download.Download, errors chan<- error) {
 	for {
 		requestedPiece := peer.requestedPieces.popRequest()
 		if requestedPiece == nil {
 			time.Sleep(requestedPiecesPopInterval)
+			continue
 		}
 
-		// TODO: Process
+		pieceData, err := downloadedPieces.ReadPiece(requestedPiece.piece)
+		if err != nil {
+			errors <- fmt.Errorf("failed to read piece #%d: %w", requestedPiece.piece, err)
+		}
+
+		// TODO: Add method to partially read piece.
+		block := (*pieceData)[requestedPiece.offset : requestedPiece.offset+requestedPiece.length]
+
+		message := message.Piece{Piece: requestedPiece.piece, Offset: requestedPiece.offset, Data: block}
+		_, err = peer.connection.Write(message.Encode())
+		if err != nil {
+			errors <- fmt.Errorf("error sending piece message: %w", err)
+			break
+		}
 	}
 }
 

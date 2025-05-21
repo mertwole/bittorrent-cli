@@ -3,7 +3,8 @@ package bitfield
 import "sync"
 
 type Bitfield struct {
-	data   []byte
+	data []byte
+	// TODO: Rename to pieceCount
 	length int
 }
 
@@ -15,6 +16,7 @@ func NewEmptyBitfield(pieceCount int) Bitfield {
 	return Bitfield{data: make([]byte, (pieceCount+7)/8), length: pieceCount}
 }
 
+// TODO: Rename to PieceCount
 func (bitfield *Bitfield) Length() int {
 	return bitfield.length
 }
@@ -73,6 +75,13 @@ func NewConcurrentBitfield(data []byte, length int) *ConcurrentBitfield {
 
 func NewEmptyConcurrentBitfield(pieceCount int) *ConcurrentBitfield {
 	return &ConcurrentBitfield{inner: NewEmptyBitfield(pieceCount)}
+}
+
+func (bitfield *ConcurrentBitfield) GetBitfield() Bitfield {
+	bitfield.mutex.RLock()
+	defer bitfield.mutex.RUnlock()
+
+	return bitfield.inner
 }
 
 func (bitfield *ConcurrentBitfield) AddPiece(piece int) {

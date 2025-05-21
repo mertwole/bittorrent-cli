@@ -25,6 +25,7 @@ const pendingPiecesQueueLength = 5
 const pieceRequestTimeout = time.Second * 120
 const blockSize = 1 << 14
 const requestedPiecesPopInterval = time.Millisecond * 100
+const notifyPresentPiecesInterval = time.Millisecond * 100
 
 type Peer struct {
 	info            tracker.PeerInfo
@@ -419,9 +420,29 @@ func (peer *Peer) sendInitialMessages() error {
 }
 
 func (peer *Peer) notifyPresentPieces(errors chan<- error) {
+	availability := peer.availablePieces.GetBitfield()
+
 	for {
-		time.Sleep(time.Second)
-		// TODO: Send have messages
+		currentAvailability := peer.availablePieces.GetBitfield()
+		newAvailable := currentAvailability.Subtract(&availability)
+
+		if newAvailable.IsEmpty() {
+			time.Sleep(notifyPresentPiecesInterval)
+			continue
+		}
+
+		availability = currentAvailability
+
+		for piece := range newAvailable.Length() {
+			if newAvailable.ContainsPiece(piece) {
+				message := message.Have{Piece: piece}
+				_, err := peer.connection.Write(message.Encode())
+				if err != nil {
+					errors <- fmt.Errorf("error sending have message: %w", err)
+					break
+				}
+			}
+		}
 	}
 }
 

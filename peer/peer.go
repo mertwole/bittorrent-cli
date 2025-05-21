@@ -24,6 +24,7 @@ const keepAliveInterval = time.Second * 120
 const pendingPiecesQueueLength = 5
 const pieceRequestTimeout = time.Second * 120
 const blockSize = 1 << 14
+const requestedPiecesPopInterval = time.Millisecond * 100
 
 type Peer struct {
 	info            tracker.PeerInfo
@@ -417,7 +418,14 @@ func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 }
 
 func (peer *Peer) uploadPieces(errors chan<- error) {
-	// TODO
+	for {
+		requestedPiece := peer.requestedPieces.popRequest()
+		if requestedPiece == nil {
+			time.Sleep(requestedPiecesPopInterval)
+		}
+
+		// TODO: Process
+	}
 }
 
 func (peer *Peer) checkStalePieceRequests() {

@@ -5,7 +5,7 @@ import (
 )
 
 func TestExtensionsInsert(t *testing.T) {
-	extensions := New()
+	extensions := Empty()
 
 	insertExtension("test_0", 1, &extensions, t)
 	assertExtensionPresent("test_0", 1, &extensions, t)

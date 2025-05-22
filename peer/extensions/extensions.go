@@ -6,8 +6,21 @@ type Extensions struct {
 	extensions map[string]int
 }
 
-func New() Extensions {
+func Empty() Extensions {
 	return Extensions{extensions: make(map[string]int)}
+}
+
+func New(supportedExtensions []string) (Extensions, error) {
+	extensions := Empty()
+
+	for i, extension := range supportedExtensions {
+		err := extensions.Insert(extension, i)
+		if err != nil {
+			return Extensions{}, err
+		}
+	}
+
+	return extensions, nil
 }
 
 func (extensions *Extensions) Insert(name string, id int) error {
@@ -44,4 +57,8 @@ func (extensions *Extensions) Insert(name string, id int) error {
 func (extensions *Extensions) GetID(name string) (int, bool) {
 	id, ok := extensions.extensions[name]
 	return id, ok
+}
+
+func (extensions *Extensions) GetMapping() map[string]int {
+	return extensions.extensions
 }

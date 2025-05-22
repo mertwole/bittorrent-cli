@@ -17,9 +17,12 @@ const protocolIdentifier = "BitTorrent protocol"
 func (handshake *Handshake) serialize() []byte {
 	serialized := make([]byte, handshakeLength)
 
+	// BEP10 extension available
+	supportedExtensions := []byte{0, 0, 0, 0, 0, 0x10, 0, 0}
+
 	serialized[0] = 0x13
 	copy(serialized[1:20], protocolIdentifier)
-	copy(serialized[20:28], []byte{0, 0, 0, 0, 0, 0, 0, 0})
+	copy(serialized[20:28], supportedExtensions)
 	copy(serialized[28:28+sha1.Size], handshake.InfoHash[:])
 	copy(serialized[28+sha1.Size:], handshake.PeerID[:])
 

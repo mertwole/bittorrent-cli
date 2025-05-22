@@ -13,6 +13,7 @@ import (
 
 	"github.com/mertwole/bittorrent-cli/bitfield"
 	"github.com/mertwole/bittorrent-cli/download"
+	"github.com/mertwole/bittorrent-cli/peer/extensions"
 	"github.com/mertwole/bittorrent-cli/peer/message"
 	"github.com/mertwole/bittorrent-cli/pieces"
 	"github.com/mertwole/bittorrent-cli/torrent_info"
@@ -27,14 +28,30 @@ const blockSize = 1 << 14
 const requestedPiecesPopInterval = time.Millisecond * 100
 const notifyPresentPiecesInterval = time.Millisecond * 100
 
+func supportedExtensions() extensions.Extensions {
+	supported := []string{""}
+
+	extensions, err := extensions.New(supported)
+	if err != nil {
+		log.Panicf("failed to create supported extensions: %v", err)
+	}
+
+	return extensions
+}
+
 type Peer struct {
-	info            tracker.PeerInfo
-	connection      net.Conn
-	availablePieces *bitfield.ConcurrentBitfield
-	chocked         bool
-	pieces          *pieces.Pieces
+	info tracker.PeerInfo
+
+	connection net.Conn
+
+	chocked             bool
+	availablePieces     *bitfield.ConcurrentBitfield
+	availableExtensions extensions.Extensions
+
 	pendingPieces   pendingPieces
 	requestedPieces requestedPieces
+
+	pieces *pieces.Pieces
 }
 
 // TODO: Upper bound on this?
@@ -179,6 +196,7 @@ func (peer *Peer) GetInfo() tracker.PeerInfo {
 func (peer *Peer) Connect(info *tracker.PeerInfo) error {
 	peer.info = *info
 	peer.chocked = true
+	peer.availableExtensions = extensions.Empty()
 
 	conn, err := net.DialTimeout("tcp", info.IP.String()+":"+strconv.Itoa(int(info.Port)), connectionTimeout)
 	if err != nil {
@@ -214,6 +232,16 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 			torrent.InfoHash,
 			responseHandshake.InfoHash,
 		)
+	}
+
+	// TODO: Check if extension protocol(BEP10) is supported.
+
+	supportedExtensions := supportedExtensions()
+	extendedHandshake := message.ExtendedHandshake{SupportedExtensions: supportedExtensions.GetMapping()}
+
+	_, err = peer.connection.Write(extendedHandshake.Encode())
+	if err != nil {
+		return fmt.Errorf("failed to send extended handshake to the peer %s: %w", peer.info.IP.String(), err)
 	}
 
 	return nil
@@ -344,6 +372,13 @@ func (peer *Peer) listen(
 		case *message.Cancel:
 			request := pieceRequest{piece: msg.Piece, offset: msg.Offset, length: msg.Length}
 			peer.requestedPieces.cancelRequest(request)
+		case *message.ExtendedHandshake:
+			// TODO: Decode extensions.
+			log.Printf(
+				"received extended handshake message. Client name: %s, supported extensions: %v",
+				msg.ClientName,
+				msg.SupportedExtensions,
+			)
 		}
 	}
 }

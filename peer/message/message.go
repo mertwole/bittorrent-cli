@@ -1,9 +1,13 @@
 package message
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
+
+	"github.com/jackpal/bencode-go"
 )
 
 const maxPayloadLength = 100_000_000
@@ -20,8 +24,10 @@ const (
 	requestMsgID       messageID = 6
 	pieceMsgID         messageID = 7
 	cancelMsgID        messageID = 8
-	unsupportedMsgID   messageID = 9
+	extendedMsgID      messageID = 20
 )
+
+const extendedHandshakeMsgID messageID = 0
 
 type Choke struct{}
 type Unchoke struct{}
@@ -49,6 +55,22 @@ type Cancel struct {
 	Length int
 }
 type KeepAlive struct{}
+
+type extended struct {
+	extendedMessageID messageID
+	payload           []byte
+}
+
+// TODO: Add all the fields and make all optional.
+type ExtendedHandshake struct {
+	SupportedExtensions map[string]int `bencode:"m"`
+	ClientName          string         `bencode:"v"`
+	//TcpListenPort       *int 			`bencode:"p"`
+	//ReceiverIPAddress   *net.IP 		`bencode:"yourip"`
+	//IPv6                *net.IP 		`bencode:"ipv6"`
+	//IPv4                *net.IP 		`bencode:"ipv4"`
+	//RequestQueueLength  *int 			`bencode:"reqq"`
+}
 
 type Message interface {
 	Encode() []byte
@@ -112,6 +134,24 @@ func (msg *Cancel) Encode() []byte {
 	return (&message{ID: cancelMsgID, Payload: payload}).encode()
 }
 
+func (msg *extended) Encode() []byte {
+	payload := []byte{byte(msg.extendedMessageID)}
+	payload = append(payload, msg.payload...)
+
+	return (&message{ID: extendedMsgID, Payload: payload}).encode()
+}
+
+func (msg *ExtendedHandshake) Encode() []byte {
+	var encodedDictionary bytes.Buffer
+	err := bencode.Marshal(&encodedDictionary, *msg)
+	if err != nil {
+		log.Panicf("cannot encode ExtendedHandshake message: %v", err)
+	}
+
+	extendedMessage := extended{extendedMessageID: extendedHandshakeMsgID, payload: encodedDictionary.Bytes()}
+	return extendedMessage.Encode()
+}
+
 func (msg *KeepAlive) Encode() []byte {
 	return make([]byte, 0)
 }
@@ -164,6 +204,7 @@ func Decode(reader io.Reader) (Message, error) {
 		return nil, fmt.Errorf("failed to read message payload: %w", err)
 	}
 
+	// TODO: Assert message lengths.
 	switch id {
 	case chokeMsgID:
 		return &Choke{}, nil
@@ -193,7 +234,29 @@ func Decode(reader io.Reader) (Message, error) {
 		offset := binary.BigEndian.Uint32(payload[4:8])
 		length := binary.BigEndian.Uint32(payload[8:12])
 		return &Cancel{Piece: int(piece), Offset: int(offset), Length: int(length)}, nil
+	case extendedMsgID:
+		extendedMessageID := messageID(payload[0])
+		payload := payload[1:]
+		extendedMessage := extended{extendedMessageID: extendedMessageID, payload: payload}
+		return extendedMessage.decode()
 	default:
 		return nil, fmt.Errorf("invalid message ID: %d", id)
+	}
+}
+
+func (extended *extended) decode() (Message, error) {
+	switch extended.extendedMessageID {
+	case extendedHandshakeMsgID:
+		buffer := bytes.NewBuffer(extended.payload)
+
+		decoded := ExtendedHandshake{}
+		err := bencode.Unmarshal(buffer, &decoded)
+		if err != nil {
+			return nil, fmt.Errorf("invalid extended handshake message: %w", err)
+		}
+
+		return &decoded, nil
+	default:
+		return nil, fmt.Errorf("invalid extended message id: %d", extended.extendedMessageID)
 	}
 }

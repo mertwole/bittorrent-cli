@@ -7,9 +7,8 @@ import (
 )
 
 type Pieces struct {
-	mutex      sync.RWMutex
-	pieces     []PieceState
-	downloaded bitfield.Bitfield
+	mutex  sync.RWMutex
+	pieces []PieceState
 }
 
 type PieceState uint8
@@ -26,14 +25,11 @@ func New(count int, downloaded *[]int) *Pieces {
 		pieces[i] = NotDownloaded
 	}
 
-	bitfield := bitfield.NewEmptyBitfield(count)
-
 	for _, downloaded := range *downloaded {
 		pieces[downloaded] = Downloaded
-		bitfield.AddPiece(downloaded)
 	}
 
-	return &Pieces{pieces: pieces, downloaded: bitfield}
+	return &Pieces{pieces: pieces}
 }
 
 func (pieces *Pieces) Length() int {
@@ -54,7 +50,14 @@ func (pieces *Pieces) GetBitfield() bitfield.Bitfield {
 	pieces.mutex.RLock()
 	defer pieces.mutex.RUnlock()
 
-	return pieces.downloaded
+	bitfield := bitfield.NewEmptyBitfield(len(pieces.pieces))
+	for i, state := range pieces.pieces {
+		if state == Downloaded {
+			bitfield.AddPiece(i)
+		}
+	}
+
+	return bitfield
 }
 
 func (pieces *Pieces) CheckStateAndChange(index int, previousState PieceState, newState PieceState) bool {
@@ -64,12 +67,6 @@ func (pieces *Pieces) CheckStateAndChange(index int, previousState PieceState, n
 	result := false
 	if pieces.pieces[index] == previousState {
 		pieces.pieces[index] = newState
-
-		if newState == Downloaded {
-			pieces.downloaded.AddPiece(index)
-		} else {
-			pieces.downloaded.RemovePiece(index)
-		}
 
 		result = true
 	}

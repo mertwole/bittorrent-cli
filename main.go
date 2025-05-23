@@ -29,6 +29,16 @@ var interactiveMode = flag.Bool("interactive", true, "Whether the client should 
 func main() {
 	flag.Parse()
 
+	if *interactiveMode {
+		logFile, err := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+		if err != nil {
+			log.Fatalf("error opening log file: %v", err)
+		}
+		defer logFile.Close()
+
+		log.SetOutput(logFile)
+	}
+
 	torrentFile, err := os.Open(*torrentFileName)
 	if err != nil {
 		log.Fatal("Failed to open torrent file: ", err)
@@ -49,14 +59,6 @@ func main() {
 	pieces := pieces.New(len(torrentInfo.Pieces), &downloadStatus.DonePieces)
 
 	if *interactiveMode {
-		logFile, err := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
-		if err != nil {
-			log.Fatalf("error opening log file: %v", err)
-		}
-		defer logFile.Close()
-
-		log.SetOutput(logFile)
-
 		go StartUI(pieces)
 	}
 

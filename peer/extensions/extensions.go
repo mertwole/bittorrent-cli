@@ -23,6 +23,18 @@ func New(supportedExtensions []string) (Extensions, error) {
 	return extensions, nil
 }
 
+func FromMap(extensions map[string]int) (Extensions, error) {
+	ext := Empty()
+	for name, id := range extensions {
+		err := ext.Insert(name, id)
+		if err != nil {
+			return Extensions{}, err
+		}
+	}
+
+	return ext, nil
+}
+
 func (extensions *Extensions) Insert(name string, id int) error {
 	if id == 0 {
 		delete(extensions.extensions, name)

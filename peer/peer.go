@@ -40,7 +40,8 @@ func supportedExtensions() extensions.Extensions {
 }
 
 type Peer struct {
-	info tracker.PeerInfo
+	info       tracker.PeerInfo
+	clientName string
 
 	connection net.Conn
 
@@ -373,12 +374,11 @@ func (peer *Peer) listen(
 			request := pieceRequest{piece: msg.Piece, offset: msg.Offset, length: msg.Length}
 			peer.requestedPieces.cancelRequest(request)
 		case *message.ExtendedHandshake:
-			// TODO: Decode extensions.
-			log.Printf(
-				"received extended handshake message. Client name: %s, supported extensions: %v",
-				msg.ClientName,
-				msg.SupportedExtensions,
-			)
+			peer.availableExtensions, err = extensions.FromMap(msg.SupportedExtensions)
+			if err != nil {
+				errors <- fmt.Errorf("failed to decode extensions: %w", err)
+			}
+			peer.clientName = msg.ClientName
 		}
 	}
 }

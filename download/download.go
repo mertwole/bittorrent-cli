@@ -61,7 +61,7 @@ func (files *Download) ReadPiece(piece int) (*[]byte, error) {
 
 	for _, file := range files.files {
 		if file.length+currentOffset > offset {
-			bytesToRead := min(files.pieceLength-bytesRead, file.length+currentOffset-offset)
+			bytesToRead := min(files.pieceLength-bytesRead, file.length+currentOffset-offset, file.length)
 			readBytes := make([]byte, bytesToRead)
 
 			readOffset := int64(max(0, offset-currentOffset))

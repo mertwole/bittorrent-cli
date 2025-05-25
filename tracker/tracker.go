@@ -17,7 +17,7 @@ import (
 )
 
 const maxAnnounceResponseLength = 1024
-const udpReadTimeout = time.Second * 5
+const udpReadTimeout = time.Second * 20
 
 const URLDataOption = 0x2
 const EndOfOptions = 0x0
@@ -93,9 +93,9 @@ func (tracker *Tracker) sendRequest() (*TrackerResponse, error) {
 	announceRequest := announceRequest{
 		infoHash:   tracker.infoHash,
 		peerID:     peerID,
-		downloaded: 4096,
+		downloaded: 0,
 		uploaded:   0,
-		left:       0,
+		left:       uint64(tracker.length),
 	}
 
 	switch tracker.url.Scheme {

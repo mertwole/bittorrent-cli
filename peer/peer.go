@@ -443,8 +443,16 @@ func (peer *Peer) sendInitialMessages() error {
 		log.Printf("sent bitfield message")
 	}
 
-	request := (&message.Unchoke{}).Encode()
+	request := (&message.Interested{}).Encode()
 	_, err := peer.connection.Write(request)
+	if err != nil {
+		return fmt.Errorf("error sending interested message: %w", err)
+	}
+
+	log.Printf("sent interested message")
+
+	request = (&message.Unchoke{}).Encode()
+	_, err = peer.connection.Write(request)
 	if err != nil {
 		return fmt.Errorf("error sending unchoke message: %w", err)
 	}

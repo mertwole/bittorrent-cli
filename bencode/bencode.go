@@ -69,14 +69,26 @@ func deserializeInt(reader io.Reader, entity any) error {
 		return fmt.Errorf("failed to parse value: %w", err)
 	}
 
-	// TODO: Support all int types.
 	entityKind := reflect.TypeOf(entity).Kind()
-	if entityKind == reflect.Int {
-		// TODO: Check CanSet.
-		reflect.ValueOf(entity).SetInt(value)
-	} else {
+	if entityKind != reflect.Pointer && entityKind != reflect.Interface {
+		return fmt.Errorf("wrong field type: expected pointer or interface, got %s", entityKind)
+	}
+
+	entityElem := reflect.ValueOf(entity).Elem()
+	entityElemKind := entityElem.Kind()
+	if entityElemKind != reflect.Int &&
+		entityElemKind != reflect.Int8 &&
+		entityElemKind != reflect.Int16 &&
+		entityElemKind != reflect.Int32 &&
+		entityElemKind != reflect.Int64 {
 		return fmt.Errorf("wrong field type: expected integer, got %s", entityKind)
 	}
+
+	if !entityElem.CanSet() {
+		return fmt.Errorf("cannot set integer value %s", entityElem)
+	}
+
+	entityElem.SetInt(value)
 
 	return nil
 }
@@ -87,12 +99,22 @@ func deserializeString(firstChar byte, reader io.Reader, entity any) error {
 		return fmt.Errorf("failed to read bencoded string: %w", err)
 	}
 
-	if reflect.TypeOf(entity).Kind() == reflect.String {
-		// TODO: Check CanSet.
-		reflect.ValueOf(entity).SetString(string(value))
-	} else {
-		// TODO: Throw error.
+	entityKind := reflect.TypeOf(entity).Kind()
+	if entityKind != reflect.Pointer && entityKind != reflect.Interface {
+		return fmt.Errorf("wrong field type: expected pointer or interface, got %s", entityKind)
 	}
+
+	entityElem := reflect.ValueOf(entity).Elem()
+	entityElemKind := entityElem.Kind()
+	if entityElemKind != reflect.String {
+		return fmt.Errorf("wrong field type: expected string, got %s", entityKind)
+	}
+
+	if !entityElem.CanSet() {
+		return fmt.Errorf("cannot set string value %s", entityElem)
+	}
+
+	entityElem.SetString(value)
 
 	return nil
 }

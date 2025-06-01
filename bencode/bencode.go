@@ -24,17 +24,9 @@ func Deserialize(reader io.Reader, value interface{}) error {
 func deserializeInner(firstChar byte, reader io.Reader, entity any) error {
 	switch firstChar {
 	case 'i':
-		value, err := deserializeInt(reader)
+		err := deserializeInt(reader, entity)
 		if err != nil {
 			return fmt.Errorf("failed to parse int: %w", err)
-		}
-
-		// TODO: Support all int types.
-		if reflect.TypeOf(entity).Kind() == reflect.Int {
-			// TODO: Check CanSet.
-			reflect.ValueOf(entity).SetInt(value)
-		} else {
-			// TODO: Throw error.
 		}
 	case 'l':
 		// list
@@ -42,16 +34,9 @@ func deserializeInner(firstChar byte, reader io.Reader, entity any) error {
 		// dictionary
 	default:
 		if firstChar >= '0' && firstChar <= '9' {
-			value, err := deserializeString(firstChar, reader)
+			err := deserializeString(firstChar, reader, entity)
 			if err != nil {
 				return fmt.Errorf("failed to parse string: %w", err)
-			}
-
-			if reflect.TypeOf(entity).Kind() == reflect.String {
-				// TODO: Check CanSet.
-				reflect.ValueOf(entity).SetString(value)
-			} else {
-				// TODO: Throw error.
 			}
 		} else {
 			return fmt.Errorf(
@@ -64,12 +49,12 @@ func deserializeInner(firstChar byte, reader io.Reader, entity any) error {
 	return nil
 }
 
-func deserializeInt(reader io.Reader) (int64, error) {
+func deserializeInt(reader io.Reader, entity any) error {
 	digits := ""
 	for {
 		nextChar, err := readOne(reader)
 		if err != nil {
-			return 0, fmt.Errorf("failed to read value: %w", err)
+			return fmt.Errorf("failed to read value: %w", err)
 		}
 
 		if nextChar == 'e' {
@@ -79,15 +64,75 @@ func deserializeInt(reader io.Reader) (int64, error) {
 		digits += string(nextChar)
 	}
 
-	result, err := strconv.ParseInt(digits, 10, 64)
+	value, err := strconv.ParseInt(digits, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse value: %w", err)
+		return fmt.Errorf("failed to parse value: %w", err)
 	}
 
-	return result, nil
+	// TODO: Support all int types.
+	entityKind := reflect.TypeOf(entity).Kind()
+	if entityKind == reflect.Int {
+		// TODO: Check CanSet.
+		reflect.ValueOf(entity).SetInt(value)
+	} else {
+		return fmt.Errorf("wrong field type: expected integer, got %s", entityKind)
+	}
+
+	return nil
 }
 
-func deserializeString(firstChar byte, reader io.Reader) (string, error) {
+func deserializeString(firstChar byte, reader io.Reader, entity any) error {
+	value, err := readBencodedString(firstChar, reader)
+	if err != nil {
+		return fmt.Errorf("failed to read bencoded string: %w", err)
+	}
+
+	if reflect.TypeOf(entity).Kind() == reflect.String {
+		// TODO: Check CanSet.
+		reflect.ValueOf(entity).SetString(string(value))
+	} else {
+		// TODO: Throw error.
+	}
+
+	return nil
+}
+
+func deserializeDictionary(reader io.Reader, entity any) error {
+	for {
+		firstChar, err := readOne(reader)
+		if err != nil {
+			return fmt.Errorf("failed to read dictionary data: %w", err)
+		}
+
+		if firstChar == 'e' {
+			break
+		}
+
+		key, err := readBencodedString(firstChar, reader)
+		if err != nil {
+			return fmt.Errorf("failed to read dictionary key: %w", err)
+		}
+
+		firstChar, err = readOne(reader)
+		if err != nil {
+			return fmt.Errorf("failed to read dictionary data: %w", err)
+		}
+
+		// TODO: Read tags.
+		// TODO: Check if field is present.
+		field, _ := reflect.TypeOf(entity).FieldByName(key)
+		// TODO: Check if it's settable.
+		fieldInterface := reflect.ValueOf(field).Interface()
+		err = deserializeInner(firstChar, reader, fieldInterface)
+		if err != nil {
+			return fmt.Errorf("failed to deserialize dictionary value: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func readBencodedString(firstChar byte, reader io.Reader) (string, error) {
 	lengthString := string(firstChar)
 	for {
 		nextChar, err := readOne(reader)
@@ -107,13 +152,13 @@ func deserializeString(firstChar byte, reader io.Reader) (string, error) {
 		return "", fmt.Errorf("failed to parse a length: %w", err)
 	}
 
-	result := make([]byte, stringLength)
-	_, err = io.ReadFull(reader, result)
+	value := make([]byte, stringLength)
+	_, err = io.ReadFull(reader, value)
 	if err != nil {
 		return "", fmt.Errorf("failed to read value: %w", err)
 	}
 
-	return string(result), nil
+	return string(value), nil
 }
 
 func readOne(reader io.Reader) (byte, error) {

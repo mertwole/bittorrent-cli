@@ -29,9 +29,12 @@ func deserializeInner(firstChar byte, reader io.Reader, entity any) error {
 			return fmt.Errorf("failed to parse int: %w", err)
 		}
 	case 'l':
-		// list
+		// TODO: parse list.
 	case 'd':
-		// dictionary
+		err := deserializeDictionary(reader, entity)
+		if err != nil {
+			return fmt.Errorf("failed to parse dictionary: %w", err)
+		}
 	default:
 		if firstChar >= '0' && firstChar <= '9' {
 			err := deserializeString(firstChar, reader, entity)
@@ -140,11 +143,23 @@ func deserializeDictionary(reader io.Reader, entity any) error {
 			return fmt.Errorf("failed to read dictionary data: %w", err)
 		}
 
+		entityKind := reflect.TypeOf(entity).Kind()
+		if entityKind != reflect.Pointer && entityKind != reflect.Interface {
+			return fmt.Errorf("wrong field type: expected pointer or interface, got %s", entityKind)
+		}
+
+		entityElem := reflect.ValueOf(entity).Elem()
+		entityElemKind := entityElem.Kind()
+		if entityElemKind != reflect.Struct {
+			return fmt.Errorf("wrong field type: expected struct, got %s", entityKind)
+		}
+
 		// TODO: Read tags.
 		// TODO: Check if field is present.
-		field, _ := reflect.TypeOf(entity).FieldByName(key)
-		// TODO: Check if it's settable.
-		fieldInterface := reflect.ValueOf(field).Interface()
+		field := entityElem.FieldByName(key)
+
+		// TODO: Check if it's addressable and settable.
+		fieldInterface := field.Addr().Interface()
 		err = deserializeInner(firstChar, reader, fieldInterface)
 		if err != nil {
 			return fmt.Errorf("failed to deserialize dictionary value: %w", err)

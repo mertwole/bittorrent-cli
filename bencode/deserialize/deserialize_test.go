@@ -1,4 +1,4 @@
-package bencode
+package deserialize
 
 import (
 	"strings"

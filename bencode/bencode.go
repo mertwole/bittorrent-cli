@@ -52,24 +52,44 @@ func deserializeInner(firstChar byte, reader io.Reader, entity any) error {
 	return nil
 }
 
-func deserializeInt(reader io.Reader, entity any) error {
-	digits := ""
-	for {
-		nextChar, err := readOne(reader)
+func deserializeAndDrop(firstChar byte, reader io.Reader) error {
+	switch firstChar {
+	case 'i':
+		_, err := readBencodedInt(reader)
 		if err != nil {
-			return fmt.Errorf("failed to read value: %w", err)
+			return fmt.Errorf("failed to parse int: %w", err)
 		}
-
-		if nextChar == 'e' {
-			break
+	case 'l':
+		err := readAndDropBencodedList(reader)
+		if err != nil {
+			return fmt.Errorf("failed to parse list: %w", err)
 		}
-
-		digits += string(nextChar)
+	case 'd':
+		err := readAndDropBencodedDictionary(reader)
+		if err != nil {
+			return fmt.Errorf("failed to parse dictionary: %w", err)
+		}
+	default:
+		if firstChar >= '0' && firstChar <= '9' {
+			_, err := readBencodedString(firstChar, reader)
+			if err != nil {
+				return fmt.Errorf("failed to parse string: %w", err)
+			}
+		} else {
+			return fmt.Errorf(
+				"unexpected characted found: %s, expected one of `i`, `l`, `d`, `0-9`",
+				string(firstChar),
+			)
+		}
 	}
 
-	value, err := strconv.ParseInt(digits, 10, 64)
+	return nil
+}
+
+func deserializeInt(reader io.Reader, entity any) error {
+	value, err := readBencodedInt(reader)
 	if err != nil {
-		return fmt.Errorf("failed to parse value: %w", err)
+		return err
 	}
 
 	entityKind := reflect.TypeOf(entity).Kind()
@@ -168,21 +188,21 @@ func deserializeDictionary(reader io.Reader, entity any) error {
 			return fmt.Errorf("failed to read dictionary key: %w", err)
 		}
 
-		fieldName, fieldPresent := nameMapping[key]
-		if !fieldPresent {
-			// TODO: Deserialize value and drop.
-			panic("TODO")
-		}
-
 		firstChar, err = readOne(reader)
 		if err != nil {
 			return fmt.Errorf("failed to read dictionary data: %w", err)
 		}
 
-		_, fieldPresent = entityElem.Type().FieldByName(fieldName)
-		if !fieldPresent {
-			// TODO: Deserialize value and drop.
-			panic("TODO")
+		fieldName, fieldPresentInMapping := nameMapping[key]
+		_, fieldPresent := entityElem.Type().FieldByName(fieldName)
+
+		if !fieldPresentInMapping || !fieldPresent {
+			err = deserializeAndDrop(firstChar, reader)
+			if err != nil {
+				return fmt.Errorf("failed to deserialize dictionary value: %w", err)
+			}
+
+			continue
 		}
 
 		field := entityElem.FieldByName(fieldName)
@@ -253,6 +273,79 @@ func deserializeList(reader io.Reader, entity any) error {
 	}
 
 	return nil
+}
+
+func readAndDropBencodedList(reader io.Reader) error {
+	for {
+		firstChar, err := readOne(reader)
+		if err != nil {
+			return fmt.Errorf("failed to read list data: %w", err)
+		}
+
+		if firstChar == 'e' {
+			break
+		}
+
+		err = deserializeAndDrop(firstChar, reader)
+		if err != nil {
+			return fmt.Errorf("failed to deserialize list element: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func readAndDropBencodedDictionary(reader io.Reader) error {
+	for {
+		firstChar, err := readOne(reader)
+		if err != nil {
+			return fmt.Errorf("failed to read dictionary data: %w", err)
+		}
+
+		if firstChar == 'e' {
+			break
+		}
+
+		_, err = readBencodedString(firstChar, reader)
+		if err != nil {
+			return fmt.Errorf("failed to read dictionary key: %w", err)
+		}
+
+		firstChar, err = readOne(reader)
+		if err != nil {
+			return fmt.Errorf("failed to read dictionary data: %w", err)
+		}
+
+		err = deserializeAndDrop(firstChar, reader)
+		if err != nil {
+			return fmt.Errorf("failed to deserialize dictionary value: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func readBencodedInt(reader io.Reader) (int64, error) {
+	digits := ""
+	for {
+		nextChar, err := readOne(reader)
+		if err != nil {
+			return 0, fmt.Errorf("failed to read value: %w", err)
+		}
+
+		if nextChar == 'e' {
+			break
+		}
+
+		digits += string(nextChar)
+	}
+
+	value, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse value: %w", err)
+	}
+
+	return value, nil
 }
 
 func readBencodedString(firstChar byte, reader io.Reader) (string, error) {

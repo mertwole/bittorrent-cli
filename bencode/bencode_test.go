@@ -121,6 +121,44 @@ func TestTaggedFields(t *testing.T) {
 	testComparableDeserialize(bencoded, expected, t)
 }
 
+func TestExtraFields(t *testing.T) {
+	bencoded := removeWhitespaces(`
+		d
+			11:StringField
+				4:test
+
+			10:ExtraField
+				d
+					3:key
+					5:value
+				e
+
+			9:DictField
+				d
+					8:IntField
+						i10e
+					10:ExtraField
+						l
+							4:this
+							6:should
+							3:not
+							2:be
+							6:parsed
+						e
+				e
+		e
+	`)
+
+	expected := dictionaryStruct{
+		StringField: "test",
+		DictField: dictionaryStructInner{
+			IntField: 10,
+		},
+	}
+
+	testComparableDeserialize(bencoded, expected, t)
+}
+
 type dictionaryStruct struct {
 	StringField string
 	DictField   dictionaryStructInner

@@ -7,11 +7,6 @@ import (
 	"strconv"
 )
 
-// string: <length>:<data>
-// integer: i<data, base-10>e
-// list: l<value><value><...>e
-// dictionary: d<key><value><key><value><...>e // keys should be sorted
-
 func Deserialize(reader io.Reader, value interface{}) error {
 	firstChar, err := readOne(reader)
 	if err != nil {
@@ -29,7 +24,10 @@ func deserializeInner(firstChar byte, reader io.Reader, entity any) error {
 			return fmt.Errorf("failed to parse int: %w", err)
 		}
 	case 'l':
-		// TODO: parse list.
+		err := deserializeList(reader, entity)
+		if err != nil {
+			return fmt.Errorf("failed to parse list: %w", err)
+		}
 	case 'd':
 		err := deserializeDictionary(reader, entity)
 		if err != nil {
@@ -169,6 +167,51 @@ func deserializeDictionary(reader io.Reader, entity any) error {
 	return nil
 }
 
+func deserializeList(reader io.Reader, entity any) error {
+	entityKind := reflect.TypeOf(entity).Kind()
+	if entityKind != reflect.Pointer && entityKind != reflect.Interface {
+		return fmt.Errorf("wrong field type: expected pointer or interface, got %s", entityKind)
+	}
+
+	entityElem := reflect.ValueOf(entity).Elem()
+	entityElemKind := entityElem.Kind()
+	if entityElemKind != reflect.Slice {
+		return fmt.Errorf("wrong field type: expected slice, got %s", entityKind)
+	}
+
+	if !entityElem.CanSet() {
+		return fmt.Errorf("cannot set slice value")
+	}
+
+	list := reflect.MakeSlice(entityElem.Type(), 0, 0)
+	entityElem.Set(list)
+
+	for {
+		firstChar, err := readOne(reader)
+		if err != nil {
+			return fmt.Errorf("failed to read list data: %w", err)
+		}
+
+		if firstChar == 'e' {
+			break
+		}
+
+		listElementType := entityElem.Type().Elem()
+		newListElement := reflect.New(listElementType)
+
+		err = deserializeInner(firstChar, reader, newListElement.Interface())
+		if err != nil {
+			return fmt.Errorf("failed to deserialize list element: %w", err)
+		}
+
+		appendedElement := newListElement.Elem()
+		newList := reflect.Append(entityElem, appendedElement)
+		entityElem.Set(newList)
+	}
+
+	return nil
+}
+
 func readBencodedString(firstChar byte, reader io.Reader) (string, error) {
 	lengthString := string(firstChar)
 	for {
@@ -209,8 +252,9 @@ func readOne(reader io.Reader) (byte, error) {
 	return first[0], nil
 }
 
+// TODO
 func Serialize(writer io.Writer, value interface{}) error {
-	// TODO
+	// NOTE: When encoding dictionaries, keys must be sorted.
 
 	return nil
 }

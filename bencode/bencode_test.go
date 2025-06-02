@@ -18,6 +18,68 @@ func TestStringDeserialize(t *testing.T) {
 	testStringDeserialize("4:test", "test", t)
 }
 
+func TestDictionaryDeserialize(t *testing.T) {
+	bencoded := removeWhitespaces(`
+		d
+			11:StringField
+				4:test
+
+			9:DictField
+				d
+					8:IntField
+						i10e
+				e
+		e
+	`)
+
+	expected := dictionaryStruct{
+		StringField: "test",
+		DictField: dictionaryStructInner{
+			IntField: 10,
+		},
+	}
+
+	testComparableDeserialize(bencoded, expected, t)
+}
+
+func TestListDeserialize(t *testing.T) {
+	bencoded := "l4:test4:liste"
+	expected := []string{"test", "list"}
+
+	testListDeserailize(bencoded, expected, t)
+
+	bencoded = removeWhitespaces(`
+		l
+			d
+				8:IntField
+					i10e
+			e
+			d
+				8:IntField
+					i20e
+			e
+			d
+				8:IntField
+					i30e
+			e
+		e
+	`)
+	expectedValue := []dictionaryStructInner{
+		{IntField: 10}, {IntField: 20}, {IntField: 30},
+	}
+
+	testListDeserailize(bencoded, expectedValue, t)
+}
+
+type dictionaryStruct struct {
+	StringField string
+	DictField   dictionaryStructInner
+}
+
+type dictionaryStructInner struct {
+	IntField int
+}
+
 func testStringDeserialize(bencoded string, expectedValue string, t *testing.T) {
 	deserialized := "garbage"
 	err := Deserialize(strings.NewReader(bencoded), &deserialized)
@@ -30,41 +92,22 @@ func testStringDeserialize(bencoded string, expectedValue string, t *testing.T) 
 	}
 }
 
-func TestDictionaryDeserialize(t *testing.T) {
-	bencoded := `
-		d
-			11:StringField
-				4:test
-
-			9:DictField
-				d
-					8:IntField
-						i10e
-				e
-		e
-	`
-	bencoded = strings.ReplaceAll(bencoded, " ", "")
-	bencoded = strings.ReplaceAll(bencoded, "\n", "")
-	bencoded = strings.ReplaceAll(bencoded, "\r", "")
-	bencoded = strings.ReplaceAll(bencoded, "\t", "")
-
-	expected := dictionaryStruct{
-		StringField: "test",
-		DictField: dictionaryStructInner{
-			IntField: 10,
-		},
+func testListDeserailize[I comparable](bencoded string, expectedValue []I, t *testing.T) {
+	var deserialized []I
+	err := Deserialize(strings.NewReader(bencoded), &deserialized)
+	if err != nil {
+		t.Errorf("failed to deserialize: %v", err)
 	}
 
-	testComparableDeserialize(bencoded, expected, t)
-}
+	if len(deserialized) != len(expectedValue) {
+		t.Errorf("values don't match: expected %v, got %v", expectedValue, deserialized)
+	}
 
-type dictionaryStruct struct {
-	StringField string
-	DictField   dictionaryStructInner
-}
-
-type dictionaryStructInner struct {
-	IntField int
+	for i, expectedValueElement := range expectedValue {
+		if deserialized[i] != expectedValueElement {
+			t.Errorf("values don't match: expected %v, got %v", expectedValue, deserialized)
+		}
+	}
 }
 
 func testComparableDeserialize[I comparable](bencoded string, expectedValue I, t *testing.T) {
@@ -77,4 +120,13 @@ func testComparableDeserialize[I comparable](bencoded string, expectedValue I, t
 	if deserialized != expectedValue {
 		t.Errorf("values don't match: expected %v, got %v", expectedValue, deserialized)
 	}
+}
+
+func removeWhitespaces(input string) string {
+	input = strings.ReplaceAll(input, " ", "")
+	input = strings.ReplaceAll(input, "\n", "")
+	input = strings.ReplaceAll(input, "\r", "")
+	input = strings.ReplaceAll(input, "\t", "")
+
+	return input
 }

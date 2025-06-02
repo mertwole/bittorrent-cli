@@ -7,6 +7,8 @@ import (
 	"strconv"
 )
 
+const fieldTag = "bencode"
+
 func Deserialize(reader io.Reader, value interface{}) error {
 	firstChar, err := readOne(reader)
 	if err != nil {
@@ -121,6 +123,36 @@ func deserializeString(firstChar byte, reader io.Reader, entity any) error {
 }
 
 func deserializeDictionary(reader io.Reader, entity any) error {
+	entityKind := reflect.TypeOf(entity).Kind()
+	if entityKind != reflect.Pointer && entityKind != reflect.Interface {
+		return fmt.Errorf("wrong field type: expected pointer or interface, got %s", entityKind)
+	}
+
+	entityElem := reflect.ValueOf(entity).Elem()
+	entityElemKind := entityElem.Kind()
+	if entityElemKind != reflect.Struct {
+		return fmt.Errorf("wrong field type: expected struct, got %s", entityKind)
+	}
+
+	nameMapping := make(map[string]string)
+	for i := range entityElem.NumField() {
+		field := entityElem.Type().Field(i)
+		tag := field.Tag.Get(fieldTag)
+
+		var mapKey string
+		if tag != "" {
+			mapKey = tag
+		} else {
+			mapKey = field.Name
+		}
+
+		_, keyAlreadyExists := nameMapping[mapKey]
+		if keyAlreadyExists {
+			return fmt.Errorf("duplicate field names in a dictionary: %s", mapKey)
+		}
+		nameMapping[mapKey] = field.Name
+	}
+
 	for {
 		firstChar, err := readOne(reader)
 		if err != nil {
@@ -136,25 +168,24 @@ func deserializeDictionary(reader io.Reader, entity any) error {
 			return fmt.Errorf("failed to read dictionary key: %w", err)
 		}
 
+		fieldName, fieldPresent := nameMapping[key]
+		if !fieldPresent {
+			// TODO: Deserialize value and drop.
+			panic("TODO")
+		}
+
 		firstChar, err = readOne(reader)
 		if err != nil {
 			return fmt.Errorf("failed to read dictionary data: %w", err)
 		}
 
-		entityKind := reflect.TypeOf(entity).Kind()
-		if entityKind != reflect.Pointer && entityKind != reflect.Interface {
-			return fmt.Errorf("wrong field type: expected pointer or interface, got %s", entityKind)
+		_, fieldPresent = entityElem.Type().FieldByName(fieldName)
+		if !fieldPresent {
+			// TODO: Deserialize value and drop.
+			panic("TODO")
 		}
 
-		entityElem := reflect.ValueOf(entity).Elem()
-		entityElemKind := entityElem.Kind()
-		if entityElemKind != reflect.Struct {
-			return fmt.Errorf("wrong field type: expected struct, got %s", entityKind)
-		}
-
-		// TODO: Read tags.
-		// TODO: Check if field is present.
-		field := entityElem.FieldByName(key)
+		field := entityElem.FieldByName(fieldName)
 
 		var fieldInterface any
 		if field.Type().Kind() == reflect.Pointer {

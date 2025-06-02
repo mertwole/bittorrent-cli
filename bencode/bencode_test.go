@@ -102,6 +102,25 @@ func TestOptionalDeserialize(t *testing.T) {
 	testOptionalDeserialize(bencoded, expected, t)
 }
 
+func TestTaggedFields(t *testing.T) {
+	bencoded := removeWhitespaces(`
+		d
+			9:int_field
+				i15e
+			12:string@field
+				4:test
+		e
+	`)
+	bencoded = strings.ReplaceAll(bencoded, "@", " ")
+
+	expected := dictionaryStructWithTags{
+		IntField:    15,
+		StringField: "test",
+	}
+
+	testComparableDeserialize(bencoded, expected, t)
+}
+
 type dictionaryStruct struct {
 	StringField string
 	DictField   dictionaryStructInner
@@ -114,6 +133,11 @@ type dictionaryStructInner struct {
 type dictionaryStructWithOptional struct {
 	IntField         int
 	OptionalIntField *int
+}
+
+type dictionaryStructWithTags struct {
+	IntField    int    `bencode:"int_field"`
+	StringField string `bencode:"string field"`
 }
 
 func testStringDeserialize(bencoded string, expectedValue string, t *testing.T) {

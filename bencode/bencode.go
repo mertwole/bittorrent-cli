@@ -154,9 +154,13 @@ func deserializeDictionary(reader io.Reader, entity any) error {
 
 		// TODO: Read tags.
 		// TODO: Check if field is present.
+		// TODO: Process optional fields.
 		field := entityElem.FieldByName(key)
 
-		// TODO: Check if it's addressable and settable.
+		if !field.CanAddr() {
+			return fmt.Errorf("unaddressable struct field: %s", key)
+		}
+
 		fieldInterface := field.Addr().Interface()
 		err = deserializeInner(firstChar, reader, fieldInterface)
 		if err != nil {

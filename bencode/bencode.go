@@ -154,14 +154,22 @@ func deserializeDictionary(reader io.Reader, entity any) error {
 
 		// TODO: Read tags.
 		// TODO: Check if field is present.
-		// TODO: Process optional fields.
 		field := entityElem.FieldByName(key)
 
-		if !field.CanAddr() {
-			return fmt.Errorf("unaddressable struct field: %s", key)
+		var fieldInterface any
+		if field.Type().Kind() == reflect.Pointer {
+			newField := reflect.New(field.Type().Elem())
+			field.Set(newField)
+
+			fieldInterface = newField.Interface()
+		} else {
+			if !field.CanAddr() {
+				return fmt.Errorf("unaddressable struct field: %s", key)
+			}
+
+			fieldInterface = field.Addr().Interface()
 		}
 
-		fieldInterface := field.Addr().Interface()
 		err = deserializeInner(firstChar, reader, fieldInterface)
 		if err != nil {
 			return fmt.Errorf("failed to deserialize dictionary value: %w", err)

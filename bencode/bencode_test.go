@@ -71,6 +71,37 @@ func TestListDeserialize(t *testing.T) {
 	testListDeserailize(bencoded, expectedValue, t)
 }
 
+func TestOptionalDeserialize(t *testing.T) {
+	bencoded := removeWhitespaces(`
+		d
+			8:IntField
+				i15e
+			16:OptionalIntField
+				i10e
+		e
+	`)
+	optionalValue := 10
+	expected := dictionaryStructWithOptional{
+		IntField:         15,
+		OptionalIntField: &optionalValue,
+	}
+
+	testOptionalDeserialize(bencoded, expected, t)
+
+	bencoded = removeWhitespaces(`
+		d
+			8:IntField
+				i15e
+		e
+	`)
+	expected = dictionaryStructWithOptional{
+		IntField:         15,
+		OptionalIntField: nil,
+	}
+
+	testOptionalDeserialize(bencoded, expected, t)
+}
+
 type dictionaryStruct struct {
 	StringField string
 	DictField   dictionaryStructInner
@@ -78,6 +109,11 @@ type dictionaryStruct struct {
 
 type dictionaryStructInner struct {
 	IntField int
+}
+
+type dictionaryStructWithOptional struct {
+	IntField         int
+	OptionalIntField *int
 }
 
 func testStringDeserialize(bencoded string, expectedValue string, t *testing.T) {
@@ -119,6 +155,34 @@ func testComparableDeserialize[I comparable](bencoded string, expectedValue I, t
 
 	if deserialized != expectedValue {
 		t.Errorf("values don't match: expected %v, got %v", expectedValue, deserialized)
+	}
+}
+
+func testOptionalDeserialize(bencoded string, expectedValue dictionaryStructWithOptional, t *testing.T) {
+	var deserialized dictionaryStructWithOptional
+	err := Deserialize(strings.NewReader(bencoded), &deserialized)
+	if err != nil {
+		t.Errorf("failed to deserialize: %v", err)
+	}
+
+	if deserialized.IntField != expectedValue.IntField {
+		t.Errorf(" IntFieldvalues don't match: expected %v, got %v", expectedValue.IntField, deserialized.IntField)
+	}
+
+	if (deserialized.OptionalIntField == nil) != (expectedValue.OptionalIntField == nil) {
+		t.Errorf(
+			"OptionalIntField values don't match: expected %v, got %v",
+			expectedValue.OptionalIntField,
+			deserialized.OptionalIntField,
+		)
+	} else if deserialized.OptionalIntField != nil {
+		if *deserialized.OptionalIntField != *expectedValue.OptionalIntField {
+			t.Errorf(
+				"OptionalIntField values don't match: expected %v, got %v",
+				*expectedValue.OptionalIntField,
+				*deserialized.OptionalIntField,
+			)
+		}
 	}
 }
 

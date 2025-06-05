@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"slices"
 
-	"github.com/jackpal/bencode-go"
+	"github.com/mertwole/bittorrent-cli/bencode"
 )
 
 type TorrentInfo struct {
@@ -26,26 +26,18 @@ type FileInfo struct {
 	Length int
 }
 
+type bencodeTorrent struct {
+	Announce     string      `bencode:"announce"`
+	AnnounceList [][]string  `bencode:"announce-list"`
+	Info         bencodeInfo `bencode:"info"`
+}
+
 type bencodeInfo struct {
-	Pieces      string            `bencode:"pieces"`
-	PieceLength int               `bencode:"piece length"`
-	Length      int               `bencode:"length"`
-	Name        string            `bencode:"name"`
-	Files       []bencodeFileInfo `bencode:"files"`
-}
-
-type bencodeInfoSingleFile struct {
-	Pieces      string `bencode:"pieces"`
-	PieceLength int    `bencode:"piece length"`
-	Length      int    `bencode:"length"`
-	Name        string `bencode:"name"`
-}
-
-type bencodeInfoMultiFile struct {
-	Pieces      string            `bencode:"pieces"`
-	PieceLength int               `bencode:"piece length"`
-	Name        string            `bencode:"name"`
-	Files       []bencodeFileInfo `bencode:"files"`
+	Pieces      string             `bencode:"pieces"`
+	PieceLength int                `bencode:"piece length"`
+	Name        string             `bencode:"name"`
+	Files       *[]bencodeFileInfo `bencode:"files"`
+	Length      *int               `bencode:"length"`
 }
 
 type bencodeFileInfo struct {
@@ -53,15 +45,9 @@ type bencodeFileInfo struct {
 	Length int      `bencode:"length"`
 }
 
-type bencodeTorrent struct {
-	Announce     string      `bencode:"announce"`
-	AnnounceList [][]string  `bencode:"announce-list"`
-	Info         bencodeInfo `bencode:"info"`
-}
-
 func Decode(reader io.Reader) (*TorrentInfo, error) {
 	bencodeTorrent := bencodeTorrent{}
-	err := bencode.Unmarshal(reader, &bencodeTorrent)
+	err := bencode.Deserialize(reader, &bencodeTorrent)
 	if err != nil {
 		return nil, err
 	}
@@ -99,48 +85,26 @@ func Decode(reader io.Reader) (*TorrentInfo, error) {
 		pieces = append(pieces, [sha1.Size]byte(chunk))
 	}
 
-	files := make([]FileInfo, 0)
-	for _, bencodeFile := range bencodeTorrent.Info.Files {
-		files = append(files, FileInfo{Path: bencodeFile.Path, Length: bencodeFile.Length})
-	}
-
 	totalLength := 0
-	if len(bencodeTorrent.Info.Files) == 0 {
-		totalLength = bencodeTorrent.Info.Length
-	} else {
-		for _, file := range bencodeTorrent.Info.Files {
+	files := make([]FileInfo, 0)
+	if bencodeTorrent.Info.Files != nil {
+		for _, file := range *bencodeTorrent.Info.Files {
 			totalLength += file.Length
+			files = append(files, FileInfo(file))
 		}
-	}
-
-	var marshalledInfo bytes.Buffer
-	if len(files) == 0 {
-		info := bencodeInfoSingleFile{
-			Pieces:      bencodeTorrent.Info.Pieces,
-			PieceLength: bencodeTorrent.Info.PieceLength,
-			Length:      bencodeTorrent.Info.Length,
-			Name:        bencodeTorrent.Info.Name,
-		}
-
-		err = bencode.Marshal(&marshalledInfo, info)
-		if err != nil {
-			return nil, err
-		}
+	} else if bencodeTorrent.Info.Length == nil {
+		return nil, fmt.Errorf("cannot parse either length or file list")
 	} else {
-		info := bencodeInfoMultiFile{
-			Pieces:      bencodeTorrent.Info.Pieces,
-			PieceLength: bencodeTorrent.Info.PieceLength,
-			Name:        bencodeTorrent.Info.Name,
-			Files:       bencodeTorrent.Info.Files,
-		}
-
-		err = bencode.Marshal(&marshalledInfo, info)
-		if err != nil {
-			return nil, err
-		}
+		totalLength = *bencodeTorrent.Info.Length
 	}
 
-	info_hash := sha1.Sum(marshalledInfo.Bytes())
+	var serializedInfo bytes.Buffer
+	err = bencode.Serialize(&serializedInfo, &bencodeTorrent.Info)
+	if err != nil {
+		return nil, err
+	}
+
+	info_hash := sha1.Sum(serializedInfo.Bytes())
 
 	return &TorrentInfo{
 		Trackers:    trackers,

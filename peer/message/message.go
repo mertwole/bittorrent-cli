@@ -7,7 +7,7 @@ import (
 	"io"
 	"log"
 
-	"github.com/jackpal/bencode-go"
+	"github.com/mertwole/bittorrent-cli/bencode"
 )
 
 const maxPayloadLength = 100_000_000
@@ -143,7 +143,7 @@ func (msg *extended) Encode() []byte {
 
 func (msg *ExtendedHandshake) Encode() []byte {
 	var encodedDictionary bytes.Buffer
-	err := bencode.Marshal(&encodedDictionary, *msg)
+	err := bencode.Serialize(&encodedDictionary, *msg)
 	if err != nil {
 		log.Panicf("cannot encode ExtendedHandshake message: %v", err)
 	}
@@ -250,7 +250,7 @@ func (extended *extended) decode() (Message, error) {
 		buffer := bytes.NewBuffer(extended.payload)
 
 		decoded := ExtendedHandshake{}
-		err := bencode.Unmarshal(buffer, &decoded)
+		err := bencode.Deserialize(buffer, &decoded)
 		if err != nil {
 			return nil, fmt.Errorf("invalid extended handshake message: %w", err)
 		}

@@ -1,6 +1,7 @@
 package serialize
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"reflect"
@@ -36,6 +37,39 @@ func Serialize(writer io.Writer, value any) error {
 		}
 
 		fmt.Fprint(writer, "e")
+	case reflect.Map:
+		fmt.Fprintf(writer, "d")
+
+		entries := valueValue.MapRange()
+		mapKeyValues := make([]MapKeyValue, 0)
+		for entries.Next() {
+			mapKey := entries.Key()
+			mapValue := entries.Value()
+
+			mapKeyKind := reflect.TypeOf(mapKey.Interface()).Kind()
+			if mapKeyKind != reflect.String {
+				return fmt.Errorf("invalid map key type: %s, only string keys are supported", mapKeyKind)
+			}
+
+			keyValue := MapKeyValue{key: mapKey.String(), value: mapValue}
+			mapKeyValues = append(mapKeyValues, keyValue)
+		}
+
+		slices.SortFunc(mapKeyValues, func(a, b MapKeyValue) int { return cmp.Compare(a.key, b.key) })
+
+		for _, keyValue := range mapKeyValues {
+			err := Serialize(writer, keyValue.key)
+			if err != nil {
+				return err
+			}
+
+			err = Serialize(writer, keyValue.value.Interface())
+			if err != nil {
+				return err
+			}
+		}
+
+		fmt.Fprintf(writer, "e")
 	case reflect.Struct:
 		fmt.Fprint(writer, "d")
 
@@ -91,4 +125,9 @@ func Serialize(writer io.Writer, value any) error {
 	}
 
 	return nil
+}
+
+type MapKeyValue struct {
+	key   string
+	value reflect.Value
 }

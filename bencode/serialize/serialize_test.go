@@ -24,6 +24,23 @@ func TestListSerialize(t *testing.T) {
 	testSerialize([]string{"test 1", "test 2"}, "l6:test 16:test 2e", t)
 }
 
+func TestMapSerialize(t *testing.T) {
+	value := make(map[string]int)
+	value["test_1"] = 1
+	value["test_2"] = 2
+
+	expected := removeWhitespaces(`
+		d
+			6:test_1
+				i1e
+			6:test_2
+				i2e
+		e
+	`)
+
+	testSerialize(value, expected, t)
+}
+
 func TestDictionarySerialize(t *testing.T) {
 	value := dictionaryStruct{
 		IntField:    10,

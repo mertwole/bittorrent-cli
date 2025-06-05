@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jackpal/bencode-go"
+	"github.com/mertwole/bittorrent-cli/bencode"
 )
 
 const maxAnnounceResponseLength = 1024
@@ -132,7 +132,7 @@ func sendHTTPRequest(
 	defer response.Body.Close()
 
 	decodedResponse := trackerResponseBencode{}
-	err = bencode.Unmarshal(response.Body, &decodedResponse)
+	err = bencode.Deserialize(response.Body, &decodedResponse)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode tracker response: %w", err)
 	}

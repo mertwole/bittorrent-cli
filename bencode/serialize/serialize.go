@@ -14,8 +14,8 @@ func Serialize(writer io.Writer, value any) error {
 	valueValue := reflect.ValueOf(value)
 	switch valueKind {
 	case reflect.Pointer, reflect.Interface:
-		deref := valueValue.Elem().Interface()
-		return Serialize(writer, deref)
+		deref := valueValue.Elem()
+		return Serialize(writer, deref.Interface())
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		intValue := valueValue.Int()
 
@@ -64,7 +64,15 @@ func Serialize(writer io.Writer, value any) error {
 
 		for _, fieldKey := range fieldKeys {
 			fieldName := fields[fieldKey]
-			fieldInterface := valueValue.FieldByName(fieldName).Interface()
+
+			field := valueValue.FieldByName(fieldName)
+			fieldInterface := field.Interface()
+
+			fieldInterfaceKind := reflect.TypeOf(fieldInterface).Kind()
+			if fieldInterfaceKind == reflect.Pointer && field.IsNil() {
+				// Optional field.
+				continue
+			}
 
 			err := Serialize(writer, fieldKey)
 			if err != nil {

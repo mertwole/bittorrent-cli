@@ -49,6 +49,30 @@ func TestDictionarySerialize(t *testing.T) {
 	testSerialize(value, expectedString, t)
 }
 
+func TestDictionarySerializeWithOptionalField(t *testing.T) {
+	value := dictionaryStructWithOptionalField{
+		OptionalField: &dictionaryStructInner{IntField: 10},
+	}
+	expected := removeWhitespaces(`
+		d
+			13:OptionalField
+				d
+					8:IntField
+						i10e
+				e
+		e
+	`)
+
+	testSerialize(value, expected, t)
+
+	value = dictionaryStructWithOptionalField{
+		OptionalField: nil,
+	}
+	expected = "de"
+
+	testSerialize(value, expected, t)
+}
+
 func removeWhitespaces(input string) string {
 	input = strings.ReplaceAll(input, " ", "")
 	input = strings.ReplaceAll(input, "\n", "")
@@ -62,6 +86,10 @@ type dictionaryStruct struct {
 	IntField    int    `bencode:"int_field"`
 	StringField string `bencode:"string field"`
 	DictField   dictionaryStructInner
+}
+
+type dictionaryStructWithOptionalField struct {
+	OptionalField *dictionaryStructInner
 }
 
 type dictionaryStructInner struct {

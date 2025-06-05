@@ -2,6 +2,7 @@ package serialize
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -21,6 +22,50 @@ func TestStringSerialize(t *testing.T) {
 func TestListSerialize(t *testing.T) {
 	testSerialize([]string{"test"}, "l4:teste", t)
 	testSerialize([]string{"test 1", "test 2"}, "l6:test 16:test 2e", t)
+}
+
+func TestDictionarySerialize(t *testing.T) {
+	value := dictionaryStruct{
+		IntField:    10,
+		StringField: "test",
+		DictField:   dictionaryStructInner{IntField: 20},
+	}
+
+	expectedString := removeWhitespaces(`
+		d
+			9:DictField
+				d
+					8:IntField
+						i20e
+				e
+			9:int_field
+				i10e
+			12:string@field
+				4:test
+		e
+	`)
+	expectedString = strings.ReplaceAll(expectedString, "@", " ")
+
+	testSerialize(value, expectedString, t)
+}
+
+func removeWhitespaces(input string) string {
+	input = strings.ReplaceAll(input, " ", "")
+	input = strings.ReplaceAll(input, "\n", "")
+	input = strings.ReplaceAll(input, "\r", "")
+	input = strings.ReplaceAll(input, "\t", "")
+
+	return input
+}
+
+type dictionaryStruct struct {
+	IntField    int    `bencode:"int_field"`
+	StringField string `bencode:"string field"`
+	DictField   dictionaryStructInner
+}
+
+type dictionaryStructInner struct {
+	IntField int
 }
 
 func testSerialize(value any, expected string, t *testing.T) {

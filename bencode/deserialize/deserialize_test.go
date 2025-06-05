@@ -7,11 +7,11 @@ import (
 )
 
 func TestIntDeserialize(t *testing.T) {
-	testComparableDeserialize("i10e", int8(10), t)
-	testComparableDeserialize("i-10e", int16(-10), t)
-	testComparableDeserialize("i10000000e", int32(10000000), t)
-	testComparableDeserialize("i0e", int64(0), t)
-	testComparableDeserialize("i-10000000e", int(-10000000), t)
+	testDeepEqualDeserailize("i10e", int8(10), t)
+	testDeepEqualDeserailize("i-10e", int16(-10), t)
+	testDeepEqualDeserailize("i10000000e", int32(10000000), t)
+	testDeepEqualDeserailize("i0e", int64(0), t)
+	testDeepEqualDeserailize("i-10000000e", int(-10000000), t)
 }
 
 func TestStringDeserialize(t *testing.T) {
@@ -40,7 +40,7 @@ func TestDictionaryDeserialize(t *testing.T) {
 		},
 	}
 
-	testComparableDeserialize(bencoded, expected, t)
+	testDeepEqualDeserailize(bencoded, expected, t)
 }
 
 func TestDictionaryDeserializeToMap(t *testing.T) {
@@ -64,7 +64,7 @@ func TestListDeserialize(t *testing.T) {
 	bencoded := "l4:test4:liste"
 	expected := []string{"test", "list"}
 
-	testListDeserailize(bencoded, expected, t)
+	testDeepEqualDeserailize(bencoded, expected, t)
 
 	bencoded = removeWhitespaces(`
 		l
@@ -86,7 +86,7 @@ func TestListDeserialize(t *testing.T) {
 		{IntField: 10}, {IntField: 20}, {IntField: 30},
 	}
 
-	testListDeserailize(bencoded, expectedValue, t)
+	testDeepEqualDeserailize(bencoded, expectedValue, t)
 }
 
 func TestOptionalDeserialize(t *testing.T) {
@@ -104,7 +104,7 @@ func TestOptionalDeserialize(t *testing.T) {
 		OptionalIntField: &optionalValue,
 	}
 
-	testOptionalDeserialize(bencoded, expected, t)
+	testDeepEqualDeserailize(bencoded, expected, t)
 
 	bencoded = removeWhitespaces(`
 		d
@@ -117,7 +117,7 @@ func TestOptionalDeserialize(t *testing.T) {
 		OptionalIntField: nil,
 	}
 
-	testOptionalDeserialize(bencoded, expected, t)
+	testDeepEqualDeserailize(bencoded, expected, t)
 }
 
 func TestTaggedFields(t *testing.T) {
@@ -136,7 +136,7 @@ func TestTaggedFields(t *testing.T) {
 		StringField: "test",
 	}
 
-	testComparableDeserialize(bencoded, expected, t)
+	testDeepEqualDeserailize(bencoded, expected, t)
 }
 
 func TestExtraFields(t *testing.T) {
@@ -174,7 +174,7 @@ func TestExtraFields(t *testing.T) {
 		},
 	}
 
-	testComparableDeserialize(bencoded, expected, t)
+	testDeepEqualDeserailize(bencoded, expected, t)
 }
 
 type dictionaryStruct struct {
@@ -208,24 +208,6 @@ func testStringDeserialize(bencoded string, expectedValue string, t *testing.T) 
 	}
 }
 
-func testListDeserailize[I comparable](bencoded string, expectedValue []I, t *testing.T) {
-	var deserialized []I
-	err := Deserialize(strings.NewReader(bencoded), &deserialized)
-	if err != nil {
-		t.Errorf("failed to deserialize: %v", err)
-	}
-
-	if len(deserialized) != len(expectedValue) {
-		t.Errorf("values don't match: expected %v, got %v", expectedValue, deserialized)
-	}
-
-	for i, expectedValueElement := range expectedValue {
-		if deserialized[i] != expectedValueElement {
-			t.Errorf("values don't match: expected %v, got %v", expectedValue, deserialized)
-		}
-	}
-}
-
 func testDeepEqualDeserailize[I any](bencoded string, expectedValue I, t *testing.T) {
 	var deserialized I
 	err := Deserialize(strings.NewReader(bencoded), &deserialized)
@@ -235,46 +217,6 @@ func testDeepEqualDeserailize[I any](bencoded string, expectedValue I, t *testin
 
 	if !reflect.DeepEqual(deserialized, expectedValue) {
 		t.Errorf("values don't match: expected %v, got %v", expectedValue, deserialized)
-	}
-}
-
-func testComparableDeserialize[I comparable](bencoded string, expectedValue I, t *testing.T) {
-	var deserialized I
-	err := Deserialize(strings.NewReader(bencoded), &deserialized)
-	if err != nil {
-		t.Errorf("failed to deserialize: %v", err)
-	}
-
-	if deserialized != expectedValue {
-		t.Errorf("values don't match: expected %v, got %v", expectedValue, deserialized)
-	}
-}
-
-func testOptionalDeserialize(bencoded string, expectedValue dictionaryStructWithOptional, t *testing.T) {
-	var deserialized dictionaryStructWithOptional
-	err := Deserialize(strings.NewReader(bencoded), &deserialized)
-	if err != nil {
-		t.Errorf("failed to deserialize: %v", err)
-	}
-
-	if deserialized.IntField != expectedValue.IntField {
-		t.Errorf(" IntFieldvalues don't match: expected %v, got %v", expectedValue.IntField, deserialized.IntField)
-	}
-
-	if (deserialized.OptionalIntField == nil) != (expectedValue.OptionalIntField == nil) {
-		t.Errorf(
-			"OptionalIntField values don't match: expected %v, got %v",
-			expectedValue.OptionalIntField,
-			deserialized.OptionalIntField,
-		)
-	} else if deserialized.OptionalIntField != nil {
-		if *deserialized.OptionalIntField != *expectedValue.OptionalIntField {
-			t.Errorf(
-				"OptionalIntField values don't match: expected %v, got %v",
-				*expectedValue.OptionalIntField,
-				*deserialized.OptionalIntField,
-			)
-		}
 	}
 }
 

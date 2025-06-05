@@ -1,6 +1,7 @@
 package deserialize
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,23 @@ func TestDictionaryDeserialize(t *testing.T) {
 	}
 
 	testComparableDeserialize(bencoded, expected, t)
+}
+
+func TestDictionaryDeserializeToMap(t *testing.T) {
+	bencoded := removeWhitespaces(`
+		d
+			1:a
+				i10e
+			1:b
+				i20e
+		e
+	`)
+
+	expected := make(map[string]int)
+	expected["a"] = 10
+	expected["b"] = 20
+
+	testDeepEqualDeserailize(bencoded, expected, t)
 }
 
 func TestListDeserialize(t *testing.T) {
@@ -205,6 +223,18 @@ func testListDeserailize[I comparable](bencoded string, expectedValue []I, t *te
 		if deserialized[i] != expectedValueElement {
 			t.Errorf("values don't match: expected %v, got %v", expectedValue, deserialized)
 		}
+	}
+}
+
+func testDeepEqualDeserailize[I any](bencoded string, expectedValue I, t *testing.T) {
+	var deserialized I
+	err := Deserialize(strings.NewReader(bencoded), &deserialized)
+	if err != nil {
+		t.Errorf("failed to deserialize: %v", err)
+	}
+
+	if !reflect.DeepEqual(deserialized, expectedValue) {
+		t.Errorf("values don't match: expected %v, got %v", expectedValue, deserialized)
 	}
 }
 

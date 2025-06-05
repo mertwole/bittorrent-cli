@@ -150,10 +150,18 @@ func deserializeDictionary(reader io.Reader, entity any) error {
 
 	entityElem := reflect.ValueOf(entity).Elem()
 	entityElemKind := entityElem.Kind()
-	if entityElemKind != reflect.Struct {
-		return fmt.Errorf("wrong field type: expected struct, got %s", entityKind)
+	if entityElemKind != reflect.Struct && entityElemKind != reflect.Map {
+		return fmt.Errorf("wrong field type: expected struct or map, got %s", entityKind)
 	}
 
+	if entityElemKind == reflect.Struct {
+		return deserializeDictionaryToStruct(reader, entityElem)
+	} else {
+		return deserializeDictionaryToMap(reader, entityElem)
+	}
+}
+
+func deserializeDictionaryToStruct(reader io.Reader, entityElem reflect.Value) error {
 	nameMapping := make(map[string]string)
 	for i := range entityElem.NumField() {
 		field := entityElem.Type().Field(i)
@@ -225,6 +233,49 @@ func deserializeDictionary(reader io.Reader, entity any) error {
 		if err != nil {
 			return fmt.Errorf("failed to deserialize dictionary value: %w", err)
 		}
+	}
+
+	return nil
+}
+
+func deserializeDictionaryToMap(reader io.Reader, entityElem reflect.Value) error {
+	mapValueType := reflect.TypeOf(entityElem.Interface()).Elem()
+
+	newMap := reflect.MakeMap(entityElem.Type())
+
+	if !entityElem.CanSet() {
+		return fmt.Errorf("unsettable map value")
+	}
+	entityElem.Set(newMap)
+
+	for {
+		firstChar, err := readOne(reader)
+		if err != nil {
+			return fmt.Errorf("failed to read dictionary data: %w", err)
+		}
+
+		if firstChar == 'e' {
+			break
+		}
+
+		key, err := readString(firstChar, reader)
+		if err != nil {
+			return fmt.Errorf("failed to read dictionary key: %w", err)
+		}
+
+		firstChar, err = readOne(reader)
+		if err != nil {
+			return fmt.Errorf("failed to read dictionary data: %w", err)
+		}
+
+		newMapValue := reflect.New(mapValueType)
+
+		err = deserialize(firstChar, reader, newMapValue.Interface())
+		if err != nil {
+			return fmt.Errorf("failed to deserialize dictionary value: %w", err)
+		}
+
+		entityElem.SetMapIndex(reflect.ValueOf(key), newMapValue.Elem())
 	}
 
 	return nil

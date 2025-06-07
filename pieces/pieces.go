@@ -14,19 +14,16 @@ type Pieces struct {
 type PieceState uint8
 
 const (
-	NotDownloaded PieceState = 0
-	Pending       PieceState = 1
-	Downloaded    PieceState = 2
+	Unknown       PieceState = 0
+	NotDownloaded PieceState = 1
+	Pending       PieceState = 2
+	Downloaded    PieceState = 3
 )
 
-func New(count int, downloaded *[]int) *Pieces {
+func New(count int) *Pieces {
 	pieces := make([]PieceState, count)
 	for i := range count {
-		pieces[i] = NotDownloaded
-	}
-
-	for _, downloaded := range *downloaded {
-		pieces[downloaded] = Downloaded
+		pieces[i] = Unknown
 	}
 
 	return &Pieces{pieces: pieces}
@@ -64,12 +61,11 @@ func (pieces *Pieces) CheckStateAndChange(index int, previousState PieceState, n
 	pieces.mutex.Lock()
 	defer pieces.mutex.Unlock()
 
-	result := false
 	if pieces.pieces[index] == previousState {
 		pieces.pieces[index] = newState
 
-		result = true
+		return true
 	}
 
-	return result
+	return false
 }

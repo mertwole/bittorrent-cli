@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/mertwole/bittorrent-cli/pieces"
 	"github.com/mertwole/bittorrent-cli/torrent_info"
 )
 
@@ -30,26 +31,24 @@ type downloadedFile struct {
 	handle *os.File
 }
 
-type DownloadStatus struct {
-	DonePieces []int
-}
-
-func NewDownload(torrent *torrent_info.TorrentInfo, targetFolder string) (*Download, *DownloadStatus, error) {
+func NewDownload(
+	torrent *torrent_info.TorrentInfo,
+	pieces *pieces.Pieces,
+	targetFolder string,
+) (*Download, error) {
 	download := newDownloadInner(torrent, targetFolder)
 
 	err := download.createOrOpenAll()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create or open downloaded files: %w", err)
+		return nil, fmt.Errorf("failed to create or open downloaded files: %w", err)
 	}
 
-	donePieces, err := download.scanDonePieces()
+	err = download.scanDonePieces(pieces)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to scan downloaded files for already downloaded pieces: %w", err)
+		return nil, fmt.Errorf("failed to scan downloaded files for already downloaded pieces: %w", err)
 	}
 
-	status := &DownloadStatus{DonePieces: donePieces}
-
-	return download, status, nil
+	return download, nil
 }
 
 func (files *Download) ReadPiece(piece int) (*[]byte, error) {
@@ -189,20 +188,20 @@ func createOrOpenFile(path string, expectedLength int) (*os.File, error) {
 	return file, nil
 }
 
-func (files *Download) scanDonePieces() ([]int, error) {
-	donePieces := make([]int, 0)
-
+func (files *Download) scanDonePieces(pcs *pieces.Pieces) error {
 	for i, pieceHash := range files.pieceHashes {
 		piece, err := files.ReadPiece(i)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read piece #%d: %w", i, err)
+			return fmt.Errorf("failed to read piece #%d: %w", i, err)
 		}
 		readPieceHash := sha1.Sum(*piece)
 
 		if readPieceHash == pieceHash {
-			donePieces = append(donePieces, i)
+			pcs.CheckStateAndChange(i, pieces.Unknown, pieces.Downloaded)
+		} else {
+			pcs.CheckStateAndChange(i, pieces.Unknown, pieces.NotDownloaded)
 		}
 	}
 
-	return donePieces, nil
+	return nil
 }

@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mertwole/bittorrent-cli/bitfield"
+
 	"github.com/mertwole/bittorrent-cli/pieces"
 )
 
@@ -50,18 +50,26 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 func (screen mainScreen) View() string {
 	blockCount := screen.Width - 10
 
-	downloadedPiecesBitfield := screen.pieces.GetBitfield()
-	str := composeDownloadedPiecesString(&downloadedPiecesBitfield, blockCount)
+	str := composeDownloadedPiecesString(screen.pieces, blockCount)
 
 	downloadedPieces := 0
+	unknownPieces := 0
 	totalPieces := screen.pieces.Length()
 	for piece := range totalPieces {
-		if downloadedPiecesBitfield.ContainsPiece(piece) {
+		switch screen.pieces.GetState(piece) {
+		case pieces.Unknown:
+			unknownPieces++
+		case pieces.Downloaded:
 			downloadedPieces++
 		}
 	}
 
-	downloadProgressLabel := fmt.Sprintf("%d/%d pieces downloaded", downloadedPieces, totalPieces)
+	var downloadProgressLabel string
+	if unknownPieces != 0 {
+		downloadProgressLabel = fmt.Sprintf("checking pieces: %d/%d", totalPieces-unknownPieces, totalPieces)
+	} else {
+		downloadProgressLabel = fmt.Sprintf("downloading: %d/%d", downloadedPieces, totalPieces)
+	}
 
 	downloadProgressLabel = lipgloss.
 		NewStyle().
@@ -88,8 +96,8 @@ func (screen mainScreen) View() string {
 		Render()
 }
 
-func composeDownloadedPiecesString(downloadedPieces *bitfield.Bitfield, targetLength int) string {
-	pieceCount := downloadedPieces.PieceCount()
+func composeDownloadedPiecesString(pcs *pieces.Pieces, targetLength int) string {
+	pieceCount := pcs.Length()
 
 	str := ""
 	for block := range targetLength {
@@ -102,24 +110,34 @@ func composeDownloadedPiecesString(downloadedPieces *bitfield.Bitfield, targetLe
 
 		totalPieces := lastPiece - firstPiece + 1
 		totalDownloadedPieces := 0
+		hasUnknownPieces := false
+	Outer:
 		for i := firstPiece; i <= lastPiece; i++ {
-			if downloadedPieces.ContainsPiece(i) {
+			switch pcs.GetState(i) {
+			case pieces.Unknown:
+				hasUnknownPieces = true
+				break Outer
+			case pieces.Downloaded:
 				totalDownloadedPieces++
 			}
 		}
 
-		ratio := float64(totalDownloadedPieces) / float64(totalPieces)
-		switch {
-		case totalDownloadedPieces == totalPieces:
-			str += "█"
-		case totalDownloadedPieces == 0:
-			str += "─"
-		case ratio <= 0.33:
-			str += "░"
-		case ratio <= 0.66:
-			str += "▒"
-		default:
-			str += "▓"
+		if hasUnknownPieces {
+			str += "?"
+		} else {
+			ratio := float64(totalDownloadedPieces) / float64(totalPieces)
+			switch {
+			case totalDownloadedPieces == totalPieces:
+				str += "█"
+			case totalDownloadedPieces == 0:
+				str += "─"
+			case ratio <= 0.33:
+				str += "░"
+			case ratio <= 0.66:
+				str += "▒"
+			default:
+				str += "▓"
+			}
 		}
 	}
 

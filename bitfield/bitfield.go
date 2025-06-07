@@ -19,6 +19,17 @@ func (bitfield *Bitfield) PieceCount() int {
 	return bitfield.pieceCount
 }
 
+func (bitfield *Bitfield) SetPiecesCount() int {
+	setCount := 0
+	for piece := range bitfield.pieceCount {
+		if bitfield.ContainsPiece(piece) {
+			setCount++
+		}
+	}
+
+	return setCount
+}
+
 func (bitfield *Bitfield) IsEmpty() bool {
 	for _, byte_ := range bitfield.data {
 		if byte_ != 0 {

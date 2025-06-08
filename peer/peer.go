@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/mertwole/bittorrent-cli/download"
 	"github.com/mertwole/bittorrent-cli/peer/extensions"
 	"github.com/mertwole/bittorrent-cli/peer/message"
+	"github.com/mertwole/bittorrent-cli/peer/requested_pieces"
 	"github.com/mertwole/bittorrent-cli/pieces"
 	"github.com/mertwole/bittorrent-cli/torrent_info"
 	"github.com/mertwole/bittorrent-cli/tracker"
@@ -50,56 +50,9 @@ type Peer struct {
 	availableExtensions extensions.Extensions
 
 	pendingPieces   pendingPieces
-	requestedPieces requestedPieces
+	requestedPieces requested_pieces.RequestedPieces
 
 	pieces *pieces.Pieces
-}
-
-// TODO: Upper bound on this?
-type requestedPieces struct {
-	pieces []pieceRequest
-	mutex  sync.RWMutex
-}
-
-type pieceRequest struct {
-	piece  int
-	offset int
-	length int
-}
-
-func (requestedPieces *requestedPieces) addRequest(request pieceRequest) {
-	requestedPieces.mutex.Lock()
-	defer requestedPieces.mutex.Unlock()
-
-	if slices.Contains(requestedPieces.pieces, request) {
-		return
-	}
-
-	requestedPieces.pieces = append(requestedPieces.pieces, request)
-}
-
-func (requestedPieces *requestedPieces) cancelRequest(request pieceRequest) {
-	requestedPieces.mutex.Lock()
-	defer requestedPieces.mutex.Unlock()
-
-	idx := slices.Index(requestedPieces.pieces, request)
-	if idx != -1 {
-		requestedPieces.pieces = slices.Delete(requestedPieces.pieces, idx, idx+1)
-	}
-}
-
-func (requestedPieces *requestedPieces) popRequest() *pieceRequest {
-	requestedPieces.mutex.Lock()
-	defer requestedPieces.mutex.Unlock()
-
-	if len(requestedPieces.pieces) == 0 {
-		return nil
-	}
-
-	request := requestedPieces.pieces[0]
-	requestedPieces.pieces = requestedPieces.pieces[1:]
-
-	return &request
 }
 
 type pendingPieces struct {
@@ -331,8 +284,8 @@ func (peer *Peer) listen(
 				len(torrent.Pieces),
 			)
 		case *message.Request:
-			request := pieceRequest{piece: msg.Piece, offset: msg.Offset, length: msg.Length}
-			peer.requestedPieces.addRequest(request)
+			request := requested_pieces.PieceRequest{Piece: msg.Piece, Offset: msg.Offset, Length: msg.Length}
+			peer.requestedPieces.AddRequest(request)
 		case *message.Piece:
 			donePiece, err := peer.pendingPieces.insertData(msg.Piece, msg.Offset, msg.Data)
 			if err != nil {
@@ -371,8 +324,8 @@ func (peer *Peer) listen(
 				}
 			}
 		case *message.Cancel:
-			request := pieceRequest{piece: msg.Piece, offset: msg.Offset, length: msg.Length}
-			peer.requestedPieces.cancelRequest(request)
+			request := requested_pieces.PieceRequest{Piece: msg.Piece, Offset: msg.Offset, Length: msg.Length}
+			peer.requestedPieces.CancelRequest(request)
 		case *message.ExtendedHandshake:
 			peer.availableExtensions, err = extensions.FromMap(msg.SupportedExtensions)
 			if err != nil {
@@ -491,21 +444,21 @@ func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 
 func (peer *Peer) uploadPieces(downloadedPieces *download.Download, errors chan<- error) {
 	for {
-		requestedPiece := peer.requestedPieces.popRequest()
+		requestedPiece := peer.requestedPieces.PopRequest()
 		if requestedPiece == nil {
 			time.Sleep(requestedPiecesPopInterval)
 			continue
 		}
 
-		pieceData, err := downloadedPieces.ReadPiece(requestedPiece.piece)
+		pieceData, err := downloadedPieces.ReadPiece(requestedPiece.Piece)
 		if err != nil {
-			errors <- fmt.Errorf("failed to read piece #%d: %w", requestedPiece.piece, err)
+			errors <- fmt.Errorf("failed to read piece #%d: %w", requestedPiece.Piece, err)
 		}
 
 		// TODO: Add method to partially read piece.
-		block := (*pieceData)[requestedPiece.offset : requestedPiece.offset+requestedPiece.length]
+		block := (*pieceData)[requestedPiece.Offset : requestedPiece.Offset+requestedPiece.Length]
 
-		message := message.Piece{Piece: requestedPiece.piece, Offset: requestedPiece.offset, Data: block}
+		message := message.Piece{Piece: requestedPiece.Piece, Offset: requestedPiece.Offset, Data: block}
 		_, err = peer.connection.Write(message.Encode())
 		if err != nil {
 			errors <- fmt.Errorf("error sending piece message: %w", err)

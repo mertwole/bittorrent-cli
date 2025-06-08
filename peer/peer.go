@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/mertwole/bittorrent-cli/bitfield"
@@ -36,7 +37,7 @@ type Peer struct {
 
 	pieces *pieces.Pieces
 
-	endgameMode bool
+	endgameMode atomic.Bool
 }
 
 func (peer *Peer) GetInfo() tracker.PeerInfo {
@@ -268,7 +269,7 @@ Outer:
 			if peer.pieces.CheckStateAndChange(pieceIdx, pieces.NotDownloaded, pieces.Pending) {
 				setEndgameMode = false
 			} else {
-				if peer.endgameMode {
+				if peer.endgameMode.Load() {
 					if peer.pieces.GetState(pieceIdx) != pieces.Pending {
 						continue
 					}
@@ -302,13 +303,13 @@ Outer:
 			}
 		}
 
-		if !peer.endgameMode && setEndgameMode {
+		if !peer.endgameMode.Load() && setEndgameMode {
 			log.Printf("entered endgame mode")
-		} else if peer.endgameMode && !setEndgameMode {
+		} else if peer.endgameMode.Load() && !setEndgameMode {
 			log.Printf("exited endgame mode")
 		}
 
-		peer.endgameMode = setEndgameMode
+		peer.endgameMode.Store(setEndgameMode)
 	}
 }
 
@@ -407,7 +408,7 @@ func (peer *Peer) checkStalePieceRequests() {
 }
 
 func (peer *Peer) cancelCompleteRequests(errors chan<- error) {
-	for !peer.endgameMode {
+	for !peer.endgameMode.Load() {
 		time.Sleep(time.Millisecond * 100)
 	}
 

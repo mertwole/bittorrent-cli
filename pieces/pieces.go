@@ -14,16 +14,15 @@ type Pieces struct {
 type PieceState uint8
 
 const (
-	Unknown       PieceState = 0
-	NotDownloaded PieceState = 1
-	Pending       PieceState = 2
-	Downloaded    PieceState = 3
+	NotDownloaded PieceState = 0
+	Pending       PieceState = 1
+	Downloaded    PieceState = 2
 )
 
 func New(count int) *Pieces {
 	pieces := make([]PieceState, count)
 	for i := range count {
-		pieces[i] = Unknown
+		pieces[i] = NotDownloaded
 	}
 
 	return &Pieces{pieces: pieces}

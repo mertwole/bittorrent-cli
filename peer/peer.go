@@ -21,17 +21,6 @@ import (
 	"github.com/mertwole/bittorrent-cli/tracker"
 )
 
-func supportedExtensions() extensions.Extensions {
-	supported := []string{""}
-
-	extensions, err := extensions.New(supported)
-	if err != nil {
-		log.Panicf("failed to create supported extensions: %v", err)
-	}
-
-	return extensions
-}
-
 type Peer struct {
 	info       tracker.PeerInfo
 	clientName string
@@ -99,7 +88,7 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 
 	// TODO: Check if extension protocol(BEP10) is supported.
 
-	supportedExtensions := supportedExtensions()
+	supportedExtensions := constants.SupportedExtensions()
 	extendedHandshake := message.ExtendedHandshake{SupportedExtensions: supportedExtensions.GetMapping()}
 
 	_, err = peer.connection.Write(extendedHandshake.Encode())

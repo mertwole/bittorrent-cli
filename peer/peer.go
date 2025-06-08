@@ -6,38 +6,21 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"slices"
 	"strconv"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mertwole/bittorrent-cli/bitfield"
 	"github.com/mertwole/bittorrent-cli/download"
+	"github.com/mertwole/bittorrent-cli/peer/constants"
 	"github.com/mertwole/bittorrent-cli/peer/extensions"
 	"github.com/mertwole/bittorrent-cli/peer/message"
+	"github.com/mertwole/bittorrent-cli/peer/pending_pieces"
+	"github.com/mertwole/bittorrent-cli/peer/requested_pieces"
 	"github.com/mertwole/bittorrent-cli/pieces"
 	"github.com/mertwole/bittorrent-cli/torrent_info"
 	"github.com/mertwole/bittorrent-cli/tracker"
 )
-
-const connectionTimeout = time.Second * 120
-const keepAliveInterval = time.Second * 120
-const pendingPiecesQueueLength = 5
-const pieceRequestTimeout = time.Second * 120
-const blockSize = 1 << 14
-const requestedPiecesPopInterval = time.Millisecond * 100
-const notifyPresentPiecesInterval = time.Millisecond * 100
-
-func supportedExtensions() extensions.Extensions {
-	supported := []string{""}
-
-	extensions, err := extensions.New(supported)
-	if err != nil {
-		log.Panicf("failed to create supported extensions: %v", err)
-	}
-
-	return extensions
-}
 
 type Peer struct {
 	info       tracker.PeerInfo
@@ -49,145 +32,12 @@ type Peer struct {
 	availablePieces     *bitfield.ConcurrentBitfield
 	availableExtensions extensions.Extensions
 
-	pendingPieces   pendingPieces
-	requestedPieces requestedPieces
+	pendingPieces   pending_pieces.PendingPieces
+	requestedPieces requested_pieces.RequestedPieces
 
 	pieces *pieces.Pieces
-}
 
-// TODO: Upper bound on this?
-type requestedPieces struct {
-	pieces []pieceRequest
-	mutex  sync.RWMutex
-}
-
-type pieceRequest struct {
-	piece  int
-	offset int
-	length int
-}
-
-func (requestedPieces *requestedPieces) addRequest(request pieceRequest) {
-	requestedPieces.mutex.Lock()
-	defer requestedPieces.mutex.Unlock()
-
-	if slices.Contains(requestedPieces.pieces, request) {
-		return
-	}
-
-	requestedPieces.pieces = append(requestedPieces.pieces, request)
-}
-
-func (requestedPieces *requestedPieces) cancelRequest(request pieceRequest) {
-	requestedPieces.mutex.Lock()
-	defer requestedPieces.mutex.Unlock()
-
-	idx := slices.Index(requestedPieces.pieces, request)
-	if idx != -1 {
-		requestedPieces.pieces = slices.Delete(requestedPieces.pieces, idx, idx+1)
-	}
-}
-
-func (requestedPieces *requestedPieces) popRequest() *pieceRequest {
-	requestedPieces.mutex.Lock()
-	defer requestedPieces.mutex.Unlock()
-
-	if len(requestedPieces.pieces) == 0 {
-		return nil
-	}
-
-	request := requestedPieces.pieces[0]
-	requestedPieces.pieces = requestedPieces.pieces[1:]
-
-	return &request
-}
-
-type pendingPieces struct {
-	pendingPieces map[int]*pendingPiece
-	mutex         sync.RWMutex
-}
-
-type pendingPiece struct {
-	idx            int
-	data           []byte
-	totalBlocks    int
-	blocksReceived int
-	validUntil     time.Time
-}
-
-type donePiece struct {
-	idx  int
-	data []byte
-}
-
-func newPendingPieces() pendingPieces {
-	return pendingPieces{pendingPieces: make(map[int]*pendingPiece)}
-}
-
-func (pendingPieces *pendingPieces) insertData(piece int, offset int, data []byte) (*donePiece, error) {
-	pendingPieces.mutex.Lock()
-	defer pendingPieces.mutex.Unlock()
-
-	pendingPiece, ok := pendingPieces.pendingPieces[piece]
-	if !ok {
-		return nil, fmt.Errorf("unexpected piece #%d received", piece)
-	}
-
-	copy(pendingPiece.data[offset:], data)
-	pendingPiece.blocksReceived++
-
-	if pendingPiece.blocksReceived == pendingPiece.totalBlocks {
-		delete(pendingPieces.pendingPieces, piece)
-
-		return &donePiece{idx: pendingPiece.idx, data: pendingPiece.data}, nil
-	}
-
-	return nil, nil
-}
-
-func (pendingPieces *pendingPieces) length() int {
-	pendingPieces.mutex.RLock()
-	defer pendingPieces.mutex.RUnlock()
-
-	return len(pendingPieces.pendingPieces)
-}
-
-func (pendingPieces *pendingPieces) insert(piece int, pieceLength int) {
-	blockCount := (pieceLength + blockSize - 1) / blockSize
-	newPendingPiece := pendingPiece{
-		idx:            piece,
-		data:           make([]byte, pieceLength),
-		totalBlocks:    blockCount,
-		blocksReceived: 0,
-		validUntil:     time.Now().Add(pieceRequestTimeout),
-	}
-
-	pendingPieces.mutex.Lock()
-	defer pendingPieces.mutex.Unlock()
-
-	pendingPieces.pendingPieces[piece] = &newPendingPiece
-}
-
-func (pendingPieces *pendingPieces) remove(piece int) {
-	pendingPieces.mutex.Lock()
-	defer pendingPieces.mutex.Unlock()
-
-	delete(pendingPieces.pendingPieces, piece)
-}
-
-func (pendingPieces *pendingPieces) removeStale() []int {
-	pendingPieces.mutex.Lock()
-	defer pendingPieces.mutex.Unlock()
-
-	removed := make([]int, 0)
-	for piece := range pendingPieces.pendingPieces {
-		if pendingPieces.pendingPieces[piece].validUntil.Before(time.Now()) {
-			delete(pendingPieces.pendingPieces, piece)
-			removed = append(removed, piece)
-		}
-	}
-
-	return removed
+	endgameMode atomic.Bool
 }
 
 func (peer *Peer) GetInfo() tracker.PeerInfo {
@@ -199,7 +49,11 @@ func (peer *Peer) Connect(info *tracker.PeerInfo) error {
 	peer.chocked = true
 	peer.availableExtensions = extensions.Empty()
 
-	conn, err := net.DialTimeout("tcp", info.IP.String()+":"+strconv.Itoa(int(info.Port)), connectionTimeout)
+	conn, err := net.DialTimeout(
+		"tcp",
+		info.IP.String()+":"+strconv.Itoa(int(info.Port)),
+		constants.ConnectionTimeout,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to establish connection with peer %s: %w", info.IP.String(), err)
 	}
@@ -237,7 +91,7 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 
 	// TODO: Check if extension protocol(BEP10) is supported.
 
-	supportedExtensions := supportedExtensions()
+	supportedExtensions := constants.SupportedExtensions()
 	extendedHandshake := message.ExtendedHandshake{SupportedExtensions: supportedExtensions.GetMapping()}
 
 	_, err = peer.connection.Write(extendedHandshake.Encode())
@@ -256,7 +110,7 @@ func (peer *Peer) StartExchange(
 	// TODO: Cancel goroutines when error occured and cleanup the pendingPieces.
 
 	peer.pieces = pieces
-	peer.pendingPieces = newPendingPieces()
+	peer.pendingPieces = pending_pieces.NewPendingPieces()
 	peer.availablePieces = bitfield.NewEmptyConcurrentBitfield(len(torrent.Pieces))
 
 	err := peer.sendInitialMessages()
@@ -279,6 +133,9 @@ func (peer *Peer) StartExchange(
 	uploadPiecesErrors := make(chan error)
 	go peer.uploadPieces(downloadedPieces, uploadPiecesErrors)
 
+	cancelCompleteRequestsErrors := make(chan error)
+	go peer.cancelCompleteRequests(cancelCompleteRequestsErrors)
+
 	go peer.checkStalePieceRequests()
 
 	select {
@@ -291,6 +148,8 @@ func (peer *Peer) StartExchange(
 	case err := <-notifyPresentPiecesErrors:
 		return err
 	case err := <-uploadPiecesErrors:
+		return err
+	case err := <-cancelCompleteRequestsErrors:
 		return err
 	}
 }
@@ -331,19 +190,18 @@ func (peer *Peer) listen(
 				len(torrent.Pieces),
 			)
 		case *message.Request:
-			request := pieceRequest{piece: msg.Piece, offset: msg.Offset, length: msg.Length}
-			peer.requestedPieces.addRequest(request)
+			request := requested_pieces.PieceRequest{Piece: msg.Piece, Offset: msg.Offset, Length: msg.Length}
+			peer.requestedPieces.AddRequest(request)
 		case *message.Piece:
-			donePiece, err := peer.pendingPieces.insertData(msg.Piece, msg.Offset, msg.Data)
+			donePiece, err := peer.pendingPieces.InsertData(msg.Piece, msg.Offset, msg.Data)
 			if err != nil {
-				// TODO: Process this error?.
 				log.Printf("failed to insert data to the pending piece: %v", err)
 			}
 
 			if donePiece != nil {
 				log.Printf("received piece #%d", msg.Piece)
 
-				sha1 := sha1.Sum(donePiece.data)
+				sha1 := sha1.Sum(donePiece.Data)
 				var newState pieces.PieceState
 				if torrent.Pieces[msg.Piece] != sha1 {
 					log.Printf(
@@ -356,23 +214,27 @@ func (peer *Peer) listen(
 				} else {
 					globalOffset := int(msg.Piece) * torrent.PieceLength
 					downloadedPieces.WritePiece(
-						download.DownloadedPiece{Offset: globalOffset, Data: donePiece.data},
+						download.DownloadedPiece{Offset: globalOffset, Data: donePiece.Data},
 					)
 
 					newState = pieces.Downloaded
 				}
 
 				if !peer.pieces.CheckStateAndChange(int(msg.Piece), pieces.Pending, newState) {
-					log.Panicf(
-						"Piece is in unexpected state. Expected %v, got %v",
-						pieces.Pending,
-						peer.pieces.GetState(int(msg.Piece)),
-					)
+					pieceState := peer.pieces.GetState(int(msg.Piece))
+					if pieceState != pieces.Downloaded {
+						log.Panicf(
+							"Piece is in unexpected state. Expected %v or %v, got %v",
+							pieces.Pending,
+							pieces.Downloaded,
+							pieceState,
+						)
+					}
 				}
 			}
 		case *message.Cancel:
-			request := pieceRequest{piece: msg.Piece, offset: msg.Offset, length: msg.Length}
-			peer.requestedPieces.cancelRequest(request)
+			request := requested_pieces.PieceRequest{Piece: msg.Piece, Offset: msg.Offset, Length: msg.Length}
+			peer.requestedPieces.CancelRequest(request)
 		case *message.ExtendedHandshake:
 			peer.availableExtensions, err = extensions.FromMap(msg.SupportedExtensions)
 			if err != nil {
@@ -394,40 +256,60 @@ Outer:
 			continue
 		}
 
+		setEndgameMode := true
 		for pieceIdx := range len(torrent.Pieces) {
 			if peer.availablePieces == nil || !peer.availablePieces.ContainsPiece(pieceIdx) {
 				continue
 			}
 
-			if peer.pendingPieces.length() >= pendingPiecesQueueLength {
+			for peer.pendingPieces.Length() >= constants.PendingPiecesQueueLength {
 				time.Sleep(time.Millisecond * 100)
-				continue
 			}
 
-			if !peer.pieces.CheckStateAndChange(pieceIdx, pieces.NotDownloaded, pieces.Pending) {
-				continue
+			if peer.pieces.CheckStateAndChange(pieceIdx, pieces.NotDownloaded, pieces.Pending) {
+				setEndgameMode = false
+			} else {
+				if peer.endgameMode.Load() {
+					if peer.pieces.GetState(pieceIdx) != pieces.Pending {
+						continue
+					}
+
+					if peer.pendingPieces.ContainsPiece(pieceIdx) {
+						continue
+					}
+				} else {
+					continue
+				}
 			}
 
 			log.Printf("requesting piece #%d", pieceIdx)
 
 			pieceLength := min(torrent.PieceLength, torrent.TotalLength-pieceIdx*torrent.PieceLength)
-			blockCount := (pieceLength + blockSize - 1) / blockSize
+			peer.pendingPieces.Insert(pieceIdx, pieceLength)
 
-			peer.pendingPieces.insert(pieceIdx, pieceLength)
-
-			for block := range blockCount {
-				length := min(blockSize, pieceLength-block*blockSize)
-
-				message := message.Request{Piece: pieceIdx, Offset: block * blockSize, Length: length}
+			for _, block := range peer.pendingPieces.GetPendingBlocksForPiece(pieceIdx) {
+				message := message.Request{
+					Piece:  pieceIdx,
+					Offset: block.Offset,
+					Length: block.Length,
+				}
 				request := (&message).Encode()
 				_, err := peer.connection.Write(request)
 				if err != nil {
-					peer.pendingPieces.remove(pieceIdx)
+					peer.pendingPieces.Remove(pieceIdx)
 					errors <- fmt.Errorf("error sending piece request: %w", err)
 					break Outer
 				}
 			}
 		}
+
+		if !peer.endgameMode.Load() && setEndgameMode {
+			log.Printf("entered endgame mode")
+		} else if peer.endgameMode.Load() && !setEndgameMode {
+			log.Printf("exited endgame mode")
+		}
+
+		peer.endgameMode.Store(setEndgameMode)
 	}
 }
 
@@ -470,7 +352,7 @@ func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 		newAvailable := currentAvailability.Subtract(&availability)
 
 		if newAvailable.IsEmpty() {
-			time.Sleep(notifyPresentPiecesInterval)
+			time.Sleep(constants.NotifyPresentPiecesInterval)
 			continue
 		}
 
@@ -491,21 +373,21 @@ func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 
 func (peer *Peer) uploadPieces(downloadedPieces *download.Download, errors chan<- error) {
 	for {
-		requestedPiece := peer.requestedPieces.popRequest()
+		requestedPiece := peer.requestedPieces.PopRequest()
 		if requestedPiece == nil {
-			time.Sleep(requestedPiecesPopInterval)
+			time.Sleep(constants.RequestedPiecesPopInterval)
 			continue
 		}
 
-		pieceData, err := downloadedPieces.ReadPiece(requestedPiece.piece)
+		pieceData, err := downloadedPieces.ReadPiece(requestedPiece.Piece)
 		if err != nil {
-			errors <- fmt.Errorf("failed to read piece #%d: %w", requestedPiece.piece, err)
+			errors <- fmt.Errorf("failed to read piece #%d: %w", requestedPiece.Piece, err)
 		}
 
 		// TODO: Add method to partially read piece.
-		block := (*pieceData)[requestedPiece.offset : requestedPiece.offset+requestedPiece.length]
+		block := (*pieceData)[requestedPiece.Offset : requestedPiece.Offset+requestedPiece.Length]
 
-		message := message.Piece{Piece: requestedPiece.piece, Offset: requestedPiece.offset, Data: block}
+		message := message.Piece{Piece: requestedPiece.Piece, Offset: requestedPiece.Offset, Data: block}
 		_, err = peer.connection.Write(message.Encode())
 		if err != nil {
 			errors <- fmt.Errorf("error sending piece message: %w", err)
@@ -516,18 +398,54 @@ func (peer *Peer) uploadPieces(downloadedPieces *download.Download, errors chan<
 
 func (peer *Peer) checkStalePieceRequests() {
 	for {
-		time.Sleep(pieceRequestTimeout / 10)
+		time.Sleep(constants.PieceRequestTimeout / 10)
 
-		stalePieces := peer.pendingPieces.removeStale()
+		stalePieces := peer.pendingPieces.RemoveStale()
 		for _, stale := range stalePieces {
 			peer.pieces.CheckStateAndChange(stale, pieces.Pending, pieces.NotDownloaded)
 		}
 	}
 }
 
+func (peer *Peer) cancelCompleteRequests(errors chan<- error) {
+	for !peer.endgameMode.Load() {
+		time.Sleep(time.Millisecond * 100)
+	}
+
+Outer:
+	for {
+		pending := peer.pendingPieces.GetIndexes()
+		for _, pendingIdx := range pending {
+			if peer.pieces.GetState(pendingIdx) == pieces.Downloaded {
+				pendingBlocks := peer.pendingPieces.GetPendingBlocksForPiece(pendingIdx)
+
+				peer.pendingPieces.Remove(pendingIdx)
+
+				log.Printf("sending %d cancel messages for piece #%d", len(pendingBlocks), pendingIdx)
+
+				for _, block := range pendingBlocks {
+					message := message.Cancel{
+						Piece:  pendingIdx,
+						Offset: block.Offset,
+						Length: block.Length,
+					}
+
+					_, err := peer.connection.Write(message.Encode())
+					if err != nil {
+						errors <- fmt.Errorf("error sending cancel message: %w", err)
+						break Outer
+					}
+				}
+			}
+		}
+
+		time.Sleep(constants.CancelMessagesSendInterval)
+	}
+}
+
 func (peer *Peer) sendKeepAlive(errors chan<- error) {
 	for {
-		time.Sleep(keepAliveInterval)
+		time.Sleep(constants.KeepAliveInterval)
 
 		message := (&message.KeepAlive{}).Encode()
 		_, err := peer.connection.Write(message)

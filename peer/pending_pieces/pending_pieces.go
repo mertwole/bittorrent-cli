@@ -2,6 +2,7 @@ package pending_pieces
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -14,11 +15,15 @@ type PendingPieces struct {
 }
 
 type pendingPiece struct {
-	idx            int
-	data           []byte
-	totalBlocks    int
-	blocksReceived int
-	validUntil     time.Time
+	idx           int
+	data          []byte
+	pendingBlocks []PendingBlock
+	validUntil    time.Time
+}
+
+type PendingBlock struct {
+	Offset int
+	Length int
 }
 
 type DonePiece struct {
@@ -39,10 +44,21 @@ func (pendingPieces *PendingPieces) InsertData(piece int, offset int, data []byt
 		return nil, fmt.Errorf("unexpected piece #%d received", piece)
 	}
 
-	copy(pendingPiece.data[offset:], data)
-	pendingPiece.blocksReceived++
+	blockRemoved := false
+	for blockIdx, block := range pendingPiece.pendingBlocks {
+		if block.Offset == offset && block.Length == len(data) {
+			pendingPiece.pendingBlocks = slices.Delete(pendingPiece.pendingBlocks, blockIdx, blockIdx+1)
+			blockRemoved = true
+		}
+	}
 
-	if pendingPiece.blocksReceived == pendingPiece.totalBlocks {
+	if !blockRemoved {
+		return nil, fmt.Errorf("unknown block with offset %d and length %d", offset, len(data))
+	}
+
+	copy(pendingPiece.data[offset:], data)
+
+	if len(pendingPiece.pendingBlocks) == 0 {
 		delete(pendingPieces.pendingPieces, piece)
 
 		return &DonePiece{Idx: pendingPiece.idx, Data: pendingPiece.data}, nil
@@ -70,14 +86,43 @@ func (pendingPieces *PendingPieces) GetIndexes() []int {
 	return indexes
 }
 
+func (pendingPieces *PendingPieces) GetPendingBlocksForPiece(piece int) []PendingBlock {
+	pendingPieces.mutex.RLock()
+	defer pendingPieces.mutex.RUnlock()
+
+	pendingPiece, found := pendingPieces.pendingPieces[piece]
+	if !found {
+		return make([]PendingBlock, 0)
+	} else {
+		return pendingPiece.pendingBlocks
+	}
+}
+
+func (pendingPieces *PendingPieces) ContainsPiece(piece int) bool {
+	pendingPieces.mutex.RLock()
+	defer pendingPieces.mutex.RUnlock()
+
+	_, contains := pendingPieces.pendingPieces[piece]
+
+	return contains
+}
+
 func (pendingPieces *PendingPieces) Insert(piece int, pieceLength int) {
+	pendingBlocks := make([]PendingBlock, 0)
+
 	blockCount := (pieceLength + constants.BlockSize - 1) / constants.BlockSize
+	for block := range blockCount {
+		length := min(constants.BlockSize, pieceLength-block*constants.BlockSize)
+		offset := block * constants.BlockSize
+
+		pendingBlocks = append(pendingBlocks, PendingBlock{Length: length, Offset: offset})
+	}
+
 	newPendingPiece := pendingPiece{
-		idx:            piece,
-		data:           make([]byte, pieceLength),
-		totalBlocks:    blockCount,
-		blocksReceived: 0,
-		validUntil:     time.Now().Add(constants.PieceRequestTimeout),
+		idx:           piece,
+		data:          make([]byte, pieceLength),
+		pendingBlocks: pendingBlocks,
+		validUntil:    time.Now().Add(constants.PieceRequestTimeout),
 	}
 
 	pendingPieces.mutex.Lock()

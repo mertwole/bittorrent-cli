@@ -132,8 +132,8 @@ func (peer *Peer) StartExchange(
 	uploadPiecesErrors := make(chan error)
 	go peer.uploadPieces(downloadedPieces, uploadPiecesErrors)
 
-	sendCancelMessagesErrors := make(chan error)
-	go peer.sendCancelMessages(sendCancelMessagesErrors)
+	cancelCompleteRequestsErrors := make(chan error)
+	go peer.cancelCompleteRequests(cancelCompleteRequestsErrors)
 
 	go peer.checkStalePieceRequests()
 
@@ -148,7 +148,7 @@ func (peer *Peer) StartExchange(
 		return err
 	case err := <-uploadPiecesErrors:
 		return err
-	case err := <-sendCancelMessagesErrors:
+	case err := <-cancelCompleteRequestsErrors:
 		return err
 	}
 }
@@ -221,11 +221,15 @@ func (peer *Peer) listen(
 				}
 
 				if !peer.pieces.CheckStateAndChange(int(msg.Piece), pieces.Pending, newState) {
-					log.Panicf(
-						"Piece is in unexpected state. Expected %v, got %v",
-						pieces.Pending,
-						peer.pieces.GetState(int(msg.Piece)),
-					)
+					pieceState := peer.pieces.GetState(int(msg.Piece))
+					if pieceState != pieces.Downloaded {
+						log.Panicf(
+							"Piece is in unexpected state. Expected %v or %v, got %v",
+							pieces.Pending,
+							pieces.Downloaded,
+							pieceState,
+						)
+					}
 				}
 			}
 		case *message.Cancel:
@@ -253,6 +257,7 @@ Outer:
 		}
 
 		enterEndgameMode := true
+		// TODO: Process case when peer have a low count of available pieces separately.
 		for pieceIdx := range len(torrent.Pieces) {
 			if peer.availablePieces == nil || !peer.availablePieces.ContainsPiece(pieceIdx) {
 				continue
@@ -269,6 +274,10 @@ Outer:
 					if peer.pieces.GetState(pieceIdx) != pieces.Pending {
 						continue
 					}
+
+					if peer.pendingPieces.ContainsPiece(pieceIdx) {
+						continue
+					}
 				} else {
 					continue
 				}
@@ -277,17 +286,13 @@ Outer:
 			log.Printf("requesting piece #%d", pieceIdx)
 
 			pieceLength := min(torrent.PieceLength, torrent.TotalLength-pieceIdx*torrent.PieceLength)
-			blockCount := (pieceLength + constants.BlockSize - 1) / constants.BlockSize
-
 			peer.pendingPieces.Insert(pieceIdx, pieceLength)
 
-			for block := range blockCount {
-				length := min(constants.BlockSize, pieceLength-block*constants.BlockSize)
-
+			for _, block := range peer.pendingPieces.GetPendingBlocksForPiece(pieceIdx) {
 				message := message.Request{
 					Piece:  pieceIdx,
-					Offset: block * constants.BlockSize,
-					Length: length,
+					Offset: block.Offset,
+					Length: block.Length,
 				}
 				request := (&message).Encode()
 				_, err := peer.connection.Write(request)
@@ -300,8 +305,10 @@ Outer:
 		}
 
 		if enterEndgameMode {
-			peer.endgameMode = true
-			log.Printf("entered endgame mode")
+			if !peer.endgameMode {
+				peer.endgameMode = true
+				log.Printf("entered endgame mode")
+			}
 		}
 	}
 }
@@ -400,7 +407,7 @@ func (peer *Peer) checkStalePieceRequests() {
 	}
 }
 
-func (peer *Peer) sendCancelMessages(errors chan<- error) {
+func (peer *Peer) cancelCompleteRequests(errors chan<- error) {
 	for !peer.endgameMode {
 		time.Sleep(time.Millisecond * 100)
 	}

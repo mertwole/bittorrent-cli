@@ -6,14 +6,16 @@ import (
 	"os"
 	"time"
 
+	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/mertwole/bittorrent-cli/download"
 	"github.com/mertwole/bittorrent-cli/pieces"
 )
 
-func StartUI(pieces *pieces.Pieces) {
-	mainScreen := tea.NewProgram(mainScreen{pieces: pieces})
+func StartUI(pieces *pieces.Pieces, download *download.Download) {
+	mainScreen := tea.NewProgram(mainScreen{pieces: pieces, download: download})
 	mainScreen.Run()
 
 	os.Exit(0)
@@ -23,7 +25,8 @@ type mainScreen struct {
 	Width  int
 	Height int
 
-	pieces *pieces.Pieces
+	pieces   *pieces.Pieces
+	download *download.Download
 }
 
 func (screen mainScreen) Init() tea.Cmd {
@@ -48,27 +51,44 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (screen mainScreen) View() string {
-	blockCount := screen.Width - 10
-
-	str := composeDownloadedPiecesString(screen.pieces, blockCount)
-
 	downloadedPieces := 0
-	unknownPieces := 0
 	totalPieces := screen.pieces.Length()
 	for piece := range totalPieces {
-		switch screen.pieces.GetState(piece) {
-		case pieces.Unknown:
-			unknownPieces++
-		case pieces.Downloaded:
+		if screen.pieces.GetState(piece) == pieces.Downloaded {
 			downloadedPieces++
 		}
 	}
 
 	var downloadProgressLabel string
-	if unknownPieces != 0 {
-		downloadProgressLabel = fmt.Sprintf("checking pieces: %d/%d", totalPieces-unknownPieces, totalPieces)
-	} else {
+
+	progressBarWidth := screen.Width - 10
+	var progressBar string
+
+	downloadStatus := screen.download.GetStatus()
+	switch downloadStatus.State {
+	case download.PreparingFiles:
+		downloadProgressLabel = fmt.Sprintf(
+			"preparing files: %d/%d",
+			downloadStatus.Progress,
+			downloadStatus.Total,
+		)
+
+		progressBar = progress.
+			New(progress.WithWidth(progressBarWidth), progress.WithSolidFill("#66F27D")).
+			ViewAs(float64(downloadStatus.Progress) / float64(downloadStatus.Total))
+	case download.CheckingHashes:
+		downloadProgressLabel = fmt.Sprintf(
+			"checking pieces: %d/%d",
+			downloadStatus.Progress,
+			downloadStatus.Total,
+		)
+
+		progressBar = progress.
+			New(progress.WithWidth(progressBarWidth), progress.WithSolidFill("#66F27D")).
+			ViewAs(float64(downloadStatus.Progress) / float64(downloadStatus.Total))
+	case download.Ready:
 		downloadProgressLabel = fmt.Sprintf("downloading: %d/%d", downloadedPieces, totalPieces)
+		progressBar = composeDownloadedPiecesString(screen.pieces, progressBarWidth)
 	}
 
 	downloadProgressLabel = lipgloss.
@@ -81,7 +101,7 @@ func (screen mainScreen) View() string {
 		NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#2E6B38", Dark: "#66F27D"}).
 		AlignHorizontal(lipgloss.Center).
-		SetString(str).
+		SetString(progressBar).
 		Render()
 
 	return lipgloss.
@@ -110,34 +130,24 @@ func composeDownloadedPiecesString(pcs *pieces.Pieces, targetLength int) string 
 
 		totalPieces := lastPiece - firstPiece + 1
 		totalDownloadedPieces := 0
-		hasUnknownPieces := false
-	Outer:
 		for i := firstPiece; i <= lastPiece; i++ {
-			switch pcs.GetState(i) {
-			case pieces.Unknown:
-				hasUnknownPieces = true
-				break Outer
-			case pieces.Downloaded:
+			if pcs.GetState(i) == pieces.Downloaded {
 				totalDownloadedPieces++
 			}
 		}
 
-		if hasUnknownPieces {
-			str += "?"
-		} else {
-			ratio := float64(totalDownloadedPieces) / float64(totalPieces)
-			switch {
-			case totalDownloadedPieces == totalPieces:
-				str += "█"
-			case totalDownloadedPieces == 0:
-				str += "─"
-			case ratio <= 0.33:
-				str += "░"
-			case ratio <= 0.66:
-				str += "▒"
-			default:
-				str += "▓"
-			}
+		ratio := float64(totalDownloadedPieces) / float64(totalPieces)
+		switch {
+		case totalDownloadedPieces == totalPieces:
+			str += "█"
+		case totalDownloadedPieces == 0:
+			str += "─"
+		case ratio <= 0.33:
+			str += "░"
+		case ratio <= 0.66:
+			str += "▒"
+		default:
+			str += "▓"
 		}
 	}
 

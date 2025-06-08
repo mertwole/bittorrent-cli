@@ -101,6 +101,7 @@ func (download *Download) Prepare(pieces *pieces.Pieces) error {
 	if anyOpened {
 		download.status.mutex.Lock()
 		download.status.State = CheckingHashes
+		download.status.Total = pieces.Length()
 		download.status.mutex.Unlock()
 
 		err := download.scanDonePieces(pieces)
@@ -123,23 +124,23 @@ func (download *Download) GetStatus() Status {
 	return download.status
 }
 
-func (files *Download) ReadPiece(piece int) (*[]byte, error) {
-	offset := piece * files.pieceLength
+func (download *Download) ReadPiece(piece int) (*[]byte, error) {
+	offset := piece * download.pieceLength
 
 	currentOffset := 0
 	bytesRead := 0
 	readData := make([]byte, 0)
 
-	for _, file := range files.files {
+	for _, file := range download.files {
 		if file.length+currentOffset > offset {
-			bytesToRead := min(files.pieceLength-bytesRead, file.length+currentOffset-offset, file.length)
+			bytesToRead := min(download.pieceLength-bytesRead, file.length+currentOffset-offset, file.length)
 			readBytes := make([]byte, bytesToRead)
 
 			readOffset := int64(max(0, offset-currentOffset))
 
-			files.mutex.RLock()
+			download.mutex.RLock()
 			_, err := file.handle.ReadAt(readBytes, readOffset)
-			files.mutex.RUnlock()
+			download.mutex.RUnlock()
 
 			if err != nil {
 				return nil, fmt.Errorf("failed to read from file %s: %w", file.path, err)
@@ -147,7 +148,7 @@ func (files *Download) ReadPiece(piece int) (*[]byte, error) {
 			readData = append(readData, readBytes...)
 
 			bytesRead += bytesToRead
-			if bytesRead >= files.pieceLength {
+			if bytesRead >= download.pieceLength {
 				break
 			}
 		}
@@ -158,18 +159,18 @@ func (files *Download) ReadPiece(piece int) (*[]byte, error) {
 	return &readData, nil
 }
 
-func (files *Download) WritePiece(piece DownloadedPiece) error {
+func (download *Download) WritePiece(piece DownloadedPiece) error {
 	currentOffset := 0
 	bytesWritten := 0
-	for _, file := range files.files {
+	for _, file := range download.files {
 		if file.length+currentOffset > piece.Offset {
 			bytesToWrite := min(len(piece.Data)-bytesWritten, file.length+currentOffset-piece.Offset)
 
 			writeOffset := int64(max(0, piece.Offset-currentOffset))
 
-			files.mutex.Lock()
+			download.mutex.Lock()
 			_, err := file.handle.WriteAt((piece.Data)[bytesWritten:bytesWritten+bytesToWrite], writeOffset)
-			files.mutex.Unlock()
+			download.mutex.Unlock()
 
 			if err != nil {
 				return fmt.Errorf("failed to write to file %s: %w", file.path, err)
@@ -187,8 +188,8 @@ func (files *Download) WritePiece(piece DownloadedPiece) error {
 	return nil
 }
 
-func (files *Download) Finalize() {
-	for _, file := range files.files {
+func (download *Download) Finalize() {
+	for _, file := range download.files {
 		file.handle.Close()
 	}
 }
@@ -237,19 +238,21 @@ func createOrOpenFile(path string, expectedLength int) (*os.File, createOrOpenFi
 	return file, fileAction, nil
 }
 
-func (files *Download) scanDonePieces(pcs *pieces.Pieces) error {
-	for i, pieceHash := range files.pieceHashes {
-		piece, err := files.ReadPiece(i)
+func (download *Download) scanDonePieces(pcs *pieces.Pieces) error {
+	for i, pieceHash := range download.pieceHashes {
+		piece, err := download.ReadPiece(i)
 		if err != nil {
 			return fmt.Errorf("failed to read piece #%d: %w", i, err)
 		}
 		readPieceHash := sha1.Sum(*piece)
 
 		if readPieceHash == pieceHash {
-			pcs.CheckStateAndChange(i, pieces.Unknown, pieces.Downloaded)
-		} else {
-			pcs.CheckStateAndChange(i, pieces.Unknown, pieces.NotDownloaded)
+			pcs.CheckStateAndChange(i, pieces.NotDownloaded, pieces.Downloaded)
 		}
+
+		download.status.mutex.Lock()
+		download.status.Progress++
+		download.status.mutex.Unlock()
 	}
 
 	return nil

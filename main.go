@@ -48,12 +48,12 @@ func main() {
 	downloadedPieces := download.NewDownload(torrentInfo, *downloadFolderName)
 
 	if *interactiveMode {
-		go ui.StartUI(pieces)
+		go ui.StartUI(pieces, downloadedPieces)
 	}
 
 	err = downloadedPieces.Prepare(pieces)
 	if err != nil {
-		log.Fatal("Failed prepare download files: ", err)
+		log.Fatal("Failed to prepare download files: ", err)
 	}
 
 	piecesBitfield := pieces.GetBitfield()

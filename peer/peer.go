@@ -194,7 +194,6 @@ func (peer *Peer) listen(
 		case *message.Piece:
 			donePiece, err := peer.pendingPieces.InsertData(msg.Piece, msg.Offset, msg.Data)
 			if err != nil {
-				// TODO: Process this error?.
 				log.Printf("failed to insert data to the pending piece: %v", err)
 			}
 
@@ -256,8 +255,7 @@ Outer:
 			continue
 		}
 
-		enterEndgameMode := true
-		// TODO: Process case when peer have a low count of available pieces separately.
+		setEndgameMode := true
 		for pieceIdx := range len(torrent.Pieces) {
 			if peer.availablePieces == nil || !peer.availablePieces.ContainsPiece(pieceIdx) {
 				continue
@@ -268,7 +266,7 @@ Outer:
 			}
 
 			if peer.pieces.CheckStateAndChange(pieceIdx, pieces.NotDownloaded, pieces.Pending) {
-				enterEndgameMode = false
+				setEndgameMode = false
 			} else {
 				if peer.endgameMode {
 					if peer.pieces.GetState(pieceIdx) != pieces.Pending {
@@ -304,12 +302,13 @@ Outer:
 			}
 		}
 
-		if enterEndgameMode {
-			if !peer.endgameMode {
-				peer.endgameMode = true
-				log.Printf("entered endgame mode")
-			}
+		if !peer.endgameMode && setEndgameMode {
+			log.Printf("entered endgame mode")
+		} else if peer.endgameMode && !setEndgameMode {
+			log.Printf("exited endgame mode")
 		}
+
+		peer.endgameMode = setEndgameMode
 	}
 }
 

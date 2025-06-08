@@ -22,6 +22,7 @@ type Download struct {
 	files       []downloadedFile
 	pieceLength int
 	pieceHashes [][sha1.Size]byte
+	status      Status
 	mutex       sync.RWMutex
 }
 
@@ -31,24 +32,95 @@ type downloadedFile struct {
 	handle *os.File
 }
 
+type Status struct {
+	State    State
+	Progress int
+	Total    int
+	mutex    sync.RWMutex
+}
+
+type State uint8
+
+const (
+	PreparingFiles State = 0
+	CheckingHashes State = 1
+	Ready          State = 2
+)
+
 func NewDownload(
 	torrent *torrent_info.TorrentInfo,
-	pieces *pieces.Pieces,
 	targetFolder string,
-) (*Download, error) {
-	download := newDownloadInner(torrent, targetFolder)
-
-	err := download.createOrOpenAll()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create or open downloaded files: %w", err)
+) *Download {
+	downloadedFiles := Download{
+		pieceLength: torrent.PieceLength,
+		pieceHashes: torrent.Pieces,
+		status:      Status{State: PreparingFiles, Progress: 0, Total: 0},
 	}
 
-	err = download.scanDonePieces(pieces)
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan downloaded files for already downloaded pieces: %w", err)
+	if len(torrent.Files) == 0 {
+		path := filepath.Join(targetFolder, torrent.Name)
+		downloadedFiles.files = []downloadedFile{{path: path, length: torrent.TotalLength}}
+		downloadedFiles.status.Total = 1
+
+		return &downloadedFiles
 	}
 
-	return download, nil
+	downloadFolderPath := filepath.Join(targetFolder, torrent.Name)
+	downloadedFiles.files = make([]downloadedFile, len(torrent.Files))
+	for i, fileInfo := range torrent.Files {
+		relativePath := filepath.Join(fileInfo.Path...)
+		path := filepath.Join(downloadFolderPath, relativePath)
+
+		downloadedFiles.files[i] = downloadedFile{path: path, length: fileInfo.Length}
+	}
+
+	downloadedFiles.status.Total = len(downloadedFiles.files)
+
+	return &downloadedFiles
+}
+
+func (download *Download) Prepare(pieces *pieces.Pieces) error {
+	anyOpened := false
+	for i, file := range download.files {
+		fileHandle, fileAction, err := createOrOpenFile(file.path, file.length)
+		if err != nil {
+			return err
+		}
+
+		download.files[i].handle = fileHandle
+
+		if fileAction == opened {
+			anyOpened = true
+		}
+
+		download.status.mutex.Lock()
+		download.status.Progress++
+		download.status.mutex.Unlock()
+	}
+
+	if anyOpened {
+		download.status.mutex.Lock()
+		download.status.State = CheckingHashes
+		download.status.mutex.Unlock()
+
+		err := download.scanDonePieces(pieces)
+		if err != nil {
+			return fmt.Errorf("failed to scan downloaded files for already downloaded pieces: %w", err)
+		}
+	}
+
+	download.status.mutex.Lock()
+	download.status.State = Ready
+	download.status.mutex.Unlock()
+
+	return nil
+}
+
+func (download *Download) GetStatus() Status {
+	download.status.mutex.RLock()
+	defer download.status.mutex.RUnlock()
+
+	return download.status
 }
 
 func (files *Download) ReadPiece(piece int) (*[]byte, error) {
@@ -121,49 +193,24 @@ func (files *Download) Finalize() {
 	}
 }
 
-func newDownloadInner(torrent *torrent_info.TorrentInfo, targetFolder string) *Download {
-	downloadedFiles := Download{pieceLength: torrent.PieceLength, pieceHashes: torrent.Pieces}
+type createOrOpenFileAction uint8
 
-	if len(torrent.Files) == 0 {
-		path := filepath.Join(targetFolder, torrent.Name)
-		downloadedFiles.files = []downloadedFile{{path: path, length: torrent.TotalLength}}
+const (
+	none    createOrOpenFileAction = 0
+	created createOrOpenFileAction = 1
+	opened  createOrOpenFileAction = 2
+)
 
-		return &downloadedFiles
-	}
-
-	downloadFolderPath := filepath.Join(targetFolder, torrent.Name)
-	downloadedFiles.files = make([]downloadedFile, len(torrent.Files))
-	for i, fileInfo := range torrent.Files {
-		relativePath := filepath.Join(fileInfo.Path...)
-		path := filepath.Join(downloadFolderPath, relativePath)
-
-		downloadedFiles.files[i] = downloadedFile{path: path, length: fileInfo.Length}
-	}
-
-	return &downloadedFiles
-}
-
-func (files *Download) createOrOpenAll() error {
-	for i, file := range files.files {
-		fileHandle, err := createOrOpenFile(file.path, file.length)
-		if err != nil {
-			return err
-		}
-
-		files.files[i].handle = fileHandle
-	}
-
-	return nil
-}
-
-func createOrOpenFile(path string, expectedLength int) (*os.File, error) {
+func createOrOpenFile(path string, expectedLength int) (*os.File, createOrOpenFileAction, error) {
 	var file *os.File
+
+	fileAction := opened
 
 	fileInfo, err := os.Stat(path)
 	if err == nil && fileInfo.Size() == int64(expectedLength) {
 		file, err = os.OpenFile(path, os.O_RDWR, 0644)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open output file %s: %w", path, err)
+			return nil, none, fmt.Errorf("failed to open output file %s: %w", path, err)
 		}
 	}
 
@@ -171,21 +218,23 @@ func createOrOpenFile(path string, expectedLength int) (*os.File, error) {
 		dir := filepath.Dir(path)
 		err = os.MkdirAll(dir, 0770)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create output directory %s: %w", dir, err)
+			return nil, none, fmt.Errorf("failed to create output directory %s: %w", dir, err)
 		}
 
 		file, err = os.Create(path)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create output file %s: %w", path, err)
+			return nil, none, fmt.Errorf("failed to create output file %s: %w", path, err)
 		}
 
 		for range expectedLength / initialWriteChunkSize {
 			file.Write(make([]byte, initialWriteChunkSize))
 		}
 		file.Write(make([]byte, expectedLength%initialWriteChunkSize))
+
+		fileAction = created
 	}
 
-	return file, nil
+	return file, fileAction, nil
 }
 
 func (files *Download) scanDonePieces(pcs *pieces.Pieces) error {

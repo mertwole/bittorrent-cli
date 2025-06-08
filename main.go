@@ -45,14 +45,15 @@ func main() {
 	}
 
 	pieces := pieces.New(len(torrentInfo.Pieces))
+	downloadedPieces := download.NewDownload(torrentInfo, *downloadFolderName)
 
 	if *interactiveMode {
 		go ui.StartUI(pieces)
 	}
 
-	downloadedPieces, err := download.NewDownload(torrentInfo, pieces, *downloadFolderName)
+	err = downloadedPieces.Prepare(pieces)
 	if err != nil {
-		log.Fatal("Failed to start download service: ", err)
+		log.Fatal("Failed prepare download files: ", err)
 	}
 
 	piecesBitfield := pieces.GetBitfield()

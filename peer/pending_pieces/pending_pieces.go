@@ -58,6 +58,18 @@ func (pendingPieces *PendingPieces) Length() int {
 	return len(pendingPieces.pendingPieces)
 }
 
+func (pendingPieces *PendingPieces) GetIndexes() []int {
+	pendingPieces.mutex.RLock()
+	defer pendingPieces.mutex.RUnlock()
+
+	indexes := make([]int, 0)
+	for pieceIdx := range pendingPieces.pendingPieces {
+		indexes = append(indexes, pieceIdx)
+	}
+
+	return indexes
+}
+
 func (pendingPieces *PendingPieces) Insert(piece int, pieceLength int) {
 	blockCount := (pieceLength + constants.BlockSize - 1) / constants.BlockSize
 	newPendingPiece := pendingPiece{

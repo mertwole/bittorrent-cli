@@ -35,6 +35,8 @@ type Peer struct {
 	requestedPieces requested_pieces.RequestedPieces
 
 	pieces *pieces.Pieces
+
+	endgameMode bool
 }
 
 func (peer *Peer) GetInfo() tracker.PeerInfo {
@@ -130,6 +132,9 @@ func (peer *Peer) StartExchange(
 	uploadPiecesErrors := make(chan error)
 	go peer.uploadPieces(downloadedPieces, uploadPiecesErrors)
 
+	sendCancelMessagesErrors := make(chan error)
+	go peer.sendCancelMessages(sendCancelMessagesErrors)
+
 	go peer.checkStalePieceRequests()
 
 	select {
@@ -142,6 +147,8 @@ func (peer *Peer) StartExchange(
 	case err := <-notifyPresentPiecesErrors:
 		return err
 	case err := <-uploadPiecesErrors:
+		return err
+	case err := <-sendCancelMessagesErrors:
 		return err
 	}
 }
@@ -245,18 +252,26 @@ Outer:
 			continue
 		}
 
+		enterEndgameMode := true
 		for pieceIdx := range len(torrent.Pieces) {
 			if peer.availablePieces == nil || !peer.availablePieces.ContainsPiece(pieceIdx) {
 				continue
 			}
 
-			if peer.pendingPieces.Length() >= constants.PendingPiecesQueueLength {
+			for peer.pendingPieces.Length() >= constants.PendingPiecesQueueLength {
 				time.Sleep(time.Millisecond * 100)
-				continue
 			}
 
-			if !peer.pieces.CheckStateAndChange(pieceIdx, pieces.NotDownloaded, pieces.Pending) {
-				continue
+			if peer.pieces.CheckStateAndChange(pieceIdx, pieces.NotDownloaded, pieces.Pending) {
+				enterEndgameMode = false
+			} else {
+				if peer.endgameMode {
+					if peer.pieces.GetState(pieceIdx) != pieces.Pending {
+						continue
+					}
+				} else {
+					continue
+				}
 			}
 
 			log.Printf("requesting piece #%d", pieceIdx)
@@ -282,6 +297,11 @@ Outer:
 					break Outer
 				}
 			}
+		}
+
+		if enterEndgameMode {
+			peer.endgameMode = true
+			log.Printf("entered endgame mode")
 		}
 	}
 }
@@ -377,6 +397,23 @@ func (peer *Peer) checkStalePieceRequests() {
 		for _, stale := range stalePieces {
 			peer.pieces.CheckStateAndChange(stale, pieces.Pending, pieces.NotDownloaded)
 		}
+	}
+}
+
+func (peer *Peer) sendCancelMessages(errors chan<- error) {
+	for !peer.endgameMode {
+		time.Sleep(time.Millisecond * 100)
+	}
+
+	for {
+		pending := peer.pendingPieces.GetIndexes()
+		for _, pendingIdx := range pending {
+			if peer.pieces.GetState(pendingIdx) == pieces.Downloaded {
+				// TODO: Send cancel messages
+			}
+		}
+
+		time.Sleep(constants.CancelMessagesSendInterval)
 	}
 }
 

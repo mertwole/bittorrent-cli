@@ -412,11 +412,30 @@ func (peer *Peer) cancelCompleteRequests(errors chan<- error) {
 		time.Sleep(time.Millisecond * 100)
 	}
 
+Outer:
 	for {
 		pending := peer.pendingPieces.GetIndexes()
 		for _, pendingIdx := range pending {
 			if peer.pieces.GetState(pendingIdx) == pieces.Downloaded {
-				// TODO: Send cancel messages
+				pendingBlocks := peer.pendingPieces.GetPendingBlocksForPiece(pendingIdx)
+
+				peer.pendingPieces.Remove(pendingIdx)
+
+				log.Printf("sending %d cancel messages for piece #%d", len(pendingBlocks), pendingIdx)
+
+				for _, block := range pendingBlocks {
+					message := message.Cancel{
+						Piece:  pendingIdx,
+						Offset: block.Offset,
+						Length: block.Length,
+					}
+
+					_, err := peer.connection.Write(message.Encode())
+					if err != nil {
+						errors <- fmt.Errorf("error sending cancel message: %w", err)
+						break Outer
+					}
+				}
 			}
 		}
 

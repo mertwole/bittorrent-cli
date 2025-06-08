@@ -7,26 +7,19 @@ import (
 	"log"
 	"net"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/mertwole/bittorrent-cli/bitfield"
 	"github.com/mertwole/bittorrent-cli/download"
+	"github.com/mertwole/bittorrent-cli/peer/constants"
 	"github.com/mertwole/bittorrent-cli/peer/extensions"
 	"github.com/mertwole/bittorrent-cli/peer/message"
+	"github.com/mertwole/bittorrent-cli/peer/pending_pieces"
 	"github.com/mertwole/bittorrent-cli/peer/requested_pieces"
 	"github.com/mertwole/bittorrent-cli/pieces"
 	"github.com/mertwole/bittorrent-cli/torrent_info"
 	"github.com/mertwole/bittorrent-cli/tracker"
 )
-
-const connectionTimeout = time.Second * 120
-const keepAliveInterval = time.Second * 120
-const pendingPiecesQueueLength = 5
-const pieceRequestTimeout = time.Second * 120
-const blockSize = 1 << 14
-const requestedPiecesPopInterval = time.Millisecond * 100
-const notifyPresentPiecesInterval = time.Millisecond * 100
 
 func supportedExtensions() extensions.Extensions {
 	supported := []string{""}
@@ -49,98 +42,10 @@ type Peer struct {
 	availablePieces     *bitfield.ConcurrentBitfield
 	availableExtensions extensions.Extensions
 
-	pendingPieces   pendingPieces
+	pendingPieces   pending_pieces.PendingPieces
 	requestedPieces requested_pieces.RequestedPieces
 
 	pieces *pieces.Pieces
-}
-
-type pendingPieces struct {
-	pendingPieces map[int]*pendingPiece
-	mutex         sync.RWMutex
-}
-
-type pendingPiece struct {
-	idx            int
-	data           []byte
-	totalBlocks    int
-	blocksReceived int
-	validUntil     time.Time
-}
-
-type donePiece struct {
-	idx  int
-	data []byte
-}
-
-func newPendingPieces() pendingPieces {
-	return pendingPieces{pendingPieces: make(map[int]*pendingPiece)}
-}
-
-func (pendingPieces *pendingPieces) insertData(piece int, offset int, data []byte) (*donePiece, error) {
-	pendingPieces.mutex.Lock()
-	defer pendingPieces.mutex.Unlock()
-
-	pendingPiece, ok := pendingPieces.pendingPieces[piece]
-	if !ok {
-		return nil, fmt.Errorf("unexpected piece #%d received", piece)
-	}
-
-	copy(pendingPiece.data[offset:], data)
-	pendingPiece.blocksReceived++
-
-	if pendingPiece.blocksReceived == pendingPiece.totalBlocks {
-		delete(pendingPieces.pendingPieces, piece)
-
-		return &donePiece{idx: pendingPiece.idx, data: pendingPiece.data}, nil
-	}
-
-	return nil, nil
-}
-
-func (pendingPieces *pendingPieces) length() int {
-	pendingPieces.mutex.RLock()
-	defer pendingPieces.mutex.RUnlock()
-
-	return len(pendingPieces.pendingPieces)
-}
-
-func (pendingPieces *pendingPieces) insert(piece int, pieceLength int) {
-	blockCount := (pieceLength + blockSize - 1) / blockSize
-	newPendingPiece := pendingPiece{
-		idx:            piece,
-		data:           make([]byte, pieceLength),
-		totalBlocks:    blockCount,
-		blocksReceived: 0,
-		validUntil:     time.Now().Add(pieceRequestTimeout),
-	}
-
-	pendingPieces.mutex.Lock()
-	defer pendingPieces.mutex.Unlock()
-
-	pendingPieces.pendingPieces[piece] = &newPendingPiece
-}
-
-func (pendingPieces *pendingPieces) remove(piece int) {
-	pendingPieces.mutex.Lock()
-	defer pendingPieces.mutex.Unlock()
-
-	delete(pendingPieces.pendingPieces, piece)
-}
-
-func (pendingPieces *pendingPieces) removeStale() []int {
-	pendingPieces.mutex.Lock()
-	defer pendingPieces.mutex.Unlock()
-
-	removed := make([]int, 0)
-	for piece := range pendingPieces.pendingPieces {
-		if pendingPieces.pendingPieces[piece].validUntil.Before(time.Now()) {
-			delete(pendingPieces.pendingPieces, piece)
-			removed = append(removed, piece)
-		}
-	}
-
-	return removed
 }
 
 func (peer *Peer) GetInfo() tracker.PeerInfo {
@@ -152,7 +57,11 @@ func (peer *Peer) Connect(info *tracker.PeerInfo) error {
 	peer.chocked = true
 	peer.availableExtensions = extensions.Empty()
 
-	conn, err := net.DialTimeout("tcp", info.IP.String()+":"+strconv.Itoa(int(info.Port)), connectionTimeout)
+	conn, err := net.DialTimeout(
+		"tcp",
+		info.IP.String()+":"+strconv.Itoa(int(info.Port)),
+		constants.ConnectionTimeout,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to establish connection with peer %s: %w", info.IP.String(), err)
 	}
@@ -209,7 +118,7 @@ func (peer *Peer) StartExchange(
 	// TODO: Cancel goroutines when error occured and cleanup the pendingPieces.
 
 	peer.pieces = pieces
-	peer.pendingPieces = newPendingPieces()
+	peer.pendingPieces = pending_pieces.NewPendingPieces()
 	peer.availablePieces = bitfield.NewEmptyConcurrentBitfield(len(torrent.Pieces))
 
 	err := peer.sendInitialMessages()
@@ -287,7 +196,7 @@ func (peer *Peer) listen(
 			request := requested_pieces.PieceRequest{Piece: msg.Piece, Offset: msg.Offset, Length: msg.Length}
 			peer.requestedPieces.AddRequest(request)
 		case *message.Piece:
-			donePiece, err := peer.pendingPieces.insertData(msg.Piece, msg.Offset, msg.Data)
+			donePiece, err := peer.pendingPieces.InsertData(msg.Piece, msg.Offset, msg.Data)
 			if err != nil {
 				// TODO: Process this error?.
 				log.Printf("failed to insert data to the pending piece: %v", err)
@@ -296,7 +205,7 @@ func (peer *Peer) listen(
 			if donePiece != nil {
 				log.Printf("received piece #%d", msg.Piece)
 
-				sha1 := sha1.Sum(donePiece.data)
+				sha1 := sha1.Sum(donePiece.Data)
 				var newState pieces.PieceState
 				if torrent.Pieces[msg.Piece] != sha1 {
 					log.Printf(
@@ -309,7 +218,7 @@ func (peer *Peer) listen(
 				} else {
 					globalOffset := int(msg.Piece) * torrent.PieceLength
 					downloadedPieces.WritePiece(
-						download.DownloadedPiece{Offset: globalOffset, Data: donePiece.data},
+						download.DownloadedPiece{Offset: globalOffset, Data: donePiece.Data},
 					)
 
 					newState = pieces.Downloaded
@@ -352,7 +261,7 @@ Outer:
 				continue
 			}
 
-			if peer.pendingPieces.length() >= pendingPiecesQueueLength {
+			if peer.pendingPieces.Length() >= constants.PendingPiecesQueueLength {
 				time.Sleep(time.Millisecond * 100)
 				continue
 			}
@@ -364,18 +273,22 @@ Outer:
 			log.Printf("requesting piece #%d", pieceIdx)
 
 			pieceLength := min(torrent.PieceLength, torrent.TotalLength-pieceIdx*torrent.PieceLength)
-			blockCount := (pieceLength + blockSize - 1) / blockSize
+			blockCount := (pieceLength + constants.BlockSize - 1) / constants.BlockSize
 
-			peer.pendingPieces.insert(pieceIdx, pieceLength)
+			peer.pendingPieces.Insert(pieceIdx, pieceLength)
 
 			for block := range blockCount {
-				length := min(blockSize, pieceLength-block*blockSize)
+				length := min(constants.BlockSize, pieceLength-block*constants.BlockSize)
 
-				message := message.Request{Piece: pieceIdx, Offset: block * blockSize, Length: length}
+				message := message.Request{
+					Piece:  pieceIdx,
+					Offset: block * constants.BlockSize,
+					Length: length,
+				}
 				request := (&message).Encode()
 				_, err := peer.connection.Write(request)
 				if err != nil {
-					peer.pendingPieces.remove(pieceIdx)
+					peer.pendingPieces.Remove(pieceIdx)
 					errors <- fmt.Errorf("error sending piece request: %w", err)
 					break Outer
 				}
@@ -423,7 +336,7 @@ func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 		newAvailable := currentAvailability.Subtract(&availability)
 
 		if newAvailable.IsEmpty() {
-			time.Sleep(notifyPresentPiecesInterval)
+			time.Sleep(constants.NotifyPresentPiecesInterval)
 			continue
 		}
 
@@ -446,7 +359,7 @@ func (peer *Peer) uploadPieces(downloadedPieces *download.Download, errors chan<
 	for {
 		requestedPiece := peer.requestedPieces.PopRequest()
 		if requestedPiece == nil {
-			time.Sleep(requestedPiecesPopInterval)
+			time.Sleep(constants.RequestedPiecesPopInterval)
 			continue
 		}
 
@@ -469,9 +382,9 @@ func (peer *Peer) uploadPieces(downloadedPieces *download.Download, errors chan<
 
 func (peer *Peer) checkStalePieceRequests() {
 	for {
-		time.Sleep(pieceRequestTimeout / 10)
+		time.Sleep(constants.PieceRequestTimeout / 10)
 
-		stalePieces := peer.pendingPieces.removeStale()
+		stalePieces := peer.pendingPieces.RemoveStale()
 		for _, stale := range stalePieces {
 			peer.pieces.CheckStateAndChange(stale, pieces.Pending, pieces.NotDownloaded)
 		}
@@ -480,7 +393,7 @@ func (peer *Peer) checkStalePieceRequests() {
 
 func (peer *Peer) sendKeepAlive(errors chan<- error) {
 	for {
-		time.Sleep(keepAliveInterval)
+		time.Sleep(constants.KeepAliveInterval)
 
 		message := (&message.KeepAlive{}).Encode()
 		_, err := peer.connection.Write(message)

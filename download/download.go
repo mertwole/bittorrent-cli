@@ -11,8 +11,6 @@ import (
 	"github.com/mertwole/bittorrent-cli/torrent_info"
 )
 
-const initialWriteChunkSize = 1024
-
 type DownloadedPiece struct {
 	Offset int
 	Data   []byte
@@ -60,7 +58,6 @@ func NewDownload(
 	if len(torrent.Files) == 0 {
 		path := filepath.Join(targetFolder, torrent.Name)
 		downloadedFiles.files = []downloadedFile{{path: path, length: torrent.TotalLength}}
-		downloadedFiles.status.Total = 1
 
 		return &downloadedFiles
 	}
@@ -73,8 +70,6 @@ func NewDownload(
 
 		downloadedFiles.files[i] = downloadedFile{path: path, length: fileInfo.Length}
 	}
-
-	downloadedFiles.status.Total = len(downloadedFiles.files)
 
 	return &downloadedFiles
 }
@@ -92,10 +87,6 @@ func (download *Download) Prepare(pieces *pieces.Pieces) error {
 		if fileAction == opened {
 			anyOpened = true
 		}
-
-		download.status.mutex.Lock()
-		download.status.Progress++
-		download.status.mutex.Unlock()
 	}
 
 	if anyOpened {
@@ -227,10 +218,10 @@ func createOrOpenFile(path string, expectedLength int) (*os.File, createOrOpenFi
 			return nil, none, fmt.Errorf("failed to create output file %s: %w", path, err)
 		}
 
-		for range expectedLength / initialWriteChunkSize {
-			file.Write(make([]byte, initialWriteChunkSize))
+		err = file.Truncate(int64(expectedLength))
+		if err != nil {
+			return nil, none, fmt.Errorf("failed to truncate output file %s: %w", path, err)
 		}
-		file.Write(make([]byte, expectedLength%initialWriteChunkSize))
 
 		fileAction = created
 	}

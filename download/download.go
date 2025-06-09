@@ -11,8 +11,6 @@ import (
 	"github.com/mertwole/bittorrent-cli/torrent_info"
 )
 
-const initialWriteChunkSize = 1024
-
 type DownloadedPiece struct {
 	Offset int
 	Data   []byte
@@ -227,10 +225,10 @@ func createOrOpenFile(path string, expectedLength int) (*os.File, createOrOpenFi
 			return nil, none, fmt.Errorf("failed to create output file %s: %w", path, err)
 		}
 
-		for range expectedLength / initialWriteChunkSize {
-			file.Write(make([]byte, initialWriteChunkSize))
+		err = file.Truncate(int64(expectedLength))
+		if err != nil {
+			return nil, none, fmt.Errorf("failed to truncate output file %s: %w", path, err)
 		}
-		file.Write(make([]byte, expectedLength%initialWriteChunkSize))
 
 		fileAction = created
 	}

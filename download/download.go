@@ -58,7 +58,6 @@ func NewDownload(
 	if len(torrent.Files) == 0 {
 		path := filepath.Join(targetFolder, torrent.Name)
 		downloadedFiles.files = []downloadedFile{{path: path, length: torrent.TotalLength}}
-		downloadedFiles.status.Total = 1
 
 		return &downloadedFiles
 	}
@@ -71,8 +70,6 @@ func NewDownload(
 
 		downloadedFiles.files[i] = downloadedFile{path: path, length: fileInfo.Length}
 	}
-
-	downloadedFiles.status.Total = len(downloadedFiles.files)
 
 	return &downloadedFiles
 }
@@ -90,10 +87,6 @@ func (download *Download) Prepare(pieces *pieces.Pieces) error {
 		if fileAction == opened {
 			anyOpened = true
 		}
-
-		download.status.mutex.Lock()
-		download.status.Progress++
-		download.status.mutex.Unlock()
 	}
 
 	if anyOpened {

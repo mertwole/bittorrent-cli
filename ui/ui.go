@@ -50,6 +50,8 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return screen, nil
 }
 
+const progressBarPadding int = 5
+
 func (screen mainScreen) View() string {
 	downloadedPieces := 0
 	totalPieces := screen.pieces.Length()
@@ -61,21 +63,13 @@ func (screen mainScreen) View() string {
 
 	var downloadProgressLabel string
 
-	progressBarWidth := screen.Width - 10
-	var progressBar string
+	progressBarWidth := screen.Width - progressBarPadding*2
+	progressBar := ""
 
 	downloadStatus := screen.download.GetStatus()
 	switch downloadStatus.State {
 	case download.PreparingFiles:
-		downloadProgressLabel = fmt.Sprintf(
-			"preparing files: %d/%d",
-			downloadStatus.Progress,
-			downloadStatus.Total,
-		)
-
-		progressBar = progress.
-			New(progress.WithWidth(progressBarWidth), progress.WithSolidFill("#66F27D")).
-			ViewAs(float64(downloadStatus.Progress) / float64(downloadStatus.Total))
+		downloadProgressLabel = "preparing files"
 	case download.CheckingHashes:
 		downloadProgressLabel = fmt.Sprintf(
 			"checking pieces: %d/%d",
@@ -94,13 +88,11 @@ func (screen mainScreen) View() string {
 	downloadProgressLabel = lipgloss.
 		NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#4D756F", Dark: "#A5FAEC"}).
-		AlignHorizontal(lipgloss.Left).
 		SetString(downloadProgressLabel).
 		Render()
 	downloadProgress := lipgloss.
 		NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#2E6B38", Dark: "#66F27D"}).
-		AlignHorizontal(lipgloss.Center).
 		SetString(progressBar).
 		Render()
 
@@ -109,10 +101,11 @@ func (screen mainScreen) View() string {
 		SetString(
 			lipgloss.JoinVertical(lipgloss.Left, downloadProgressLabel, downloadProgress),
 		).
-		AlignHorizontal(lipgloss.Center).
+		AlignHorizontal(lipgloss.Left).
 		AlignVertical(lipgloss.Center).
 		Width(screen.Width).
 		Height(screen.Height).
+		Padding(0, progressBarPadding).
 		Render()
 }
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/charmbracelet/bubbles/filepicker"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
@@ -38,7 +39,11 @@ func StartUI() {
 	list.SetFilteringEnabled(false)
 	list.SetShowStatusBar(false)
 
-	mainScreen := tea.NewProgram(mainScreen{downloadList: &list})
+	filePicker := filepicker.New()
+	filePicker.AllowedTypes = []string{".torrent"}
+	filePicker.CurrentDirectory, _ = os.UserHomeDir()
+
+	mainScreen := tea.NewProgram(mainScreen{downloadList: &list, filePicker: &filePicker})
 	mainScreen.Run()
 
 	os.Exit(0)
@@ -49,10 +54,19 @@ type mainScreen struct {
 	Height int
 
 	downloadList *list.Model
+	filePicker   *filepicker.Model
+
+	additionRequest *additionRequest
+}
+
+type additionRequest struct {
+	filePath string
 }
 
 func (screen mainScreen) Init() tea.Cmd {
-	return tea.Batch(tea.EnterAltScreen, tickCmd())
+	filePickerCmd := screen.filePicker.Init()
+
+	return tea.Batch(tea.EnterAltScreen, tickCmd(), filePickerCmd)
 }
 
 func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -69,6 +83,9 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "right":
 			screen.downloadList.NextPage()
 			return screen, nil
+		case "+":
+			screen.additionRequest = &additionRequest{}
+			return screen, nil
 		}
 	case tea.WindowSizeMsg:
 		screen.Width = message.Width
@@ -77,17 +94,24 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return screen, tickCmd()
 	}
 
-	var cmd tea.Cmd
-	*screen.downloadList, cmd = screen.downloadList.Update(message)
+	var downloadListCmd tea.Cmd
+	var filePickerCmd tea.Cmd
 
-	return screen, cmd
+	*screen.downloadList, downloadListCmd = screen.downloadList.Update(message)
+	*screen.filePicker, filePickerCmd = screen.filePicker.Update(message)
+
+	return screen, tea.Batch(downloadListCmd, filePickerCmd)
 }
 
 func (screen mainScreen) View() string {
-	screen.downloadList.SetHeight(screen.Height)
-	screen.downloadList.SetWidth(screen.Width)
+	if screen.additionRequest != nil {
+		return screen.filePicker.View()
+	} else {
+		screen.downloadList.SetHeight(screen.Height)
+		screen.downloadList.SetWidth(screen.Width)
 
-	return screen.downloadList.View()
+		return screen.downloadList.View()
+	}
 }
 
 type downloadItem struct {

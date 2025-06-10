@@ -14,36 +14,36 @@ import (
 
 const discoveredPeersQueueSize = 16
 
-func StartDownload(fileName string, downloadFolderName string) (*pieces.Pieces, *download.Download, error) {
+type Download struct {
+	Pieces           *pieces.Pieces
+	DownloadedPieces *download.Download
+	torrentInfo      *torrent_info.TorrentInfo
+}
+
+func New(fileName string, downloadFolderName string) (*Download, error) {
 	torrentFile, err := os.Open(fileName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open torrent file: %w", err)
+		return nil, fmt.Errorf("failed to open torrent file: %w", err)
 	}
 
 	torrentInfo, err := torrent_info.Decode(torrentFile)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to decode torrent file: %w", err)
+		return nil, fmt.Errorf("failed to decode torrent file: %w", err)
 	}
 
 	pieces := pieces.New(len(torrentInfo.Pieces))
 	downloadedPieces := download.NewDownload(torrentInfo, downloadFolderName)
 
-	go startDownloadInner(torrentInfo, pieces, downloadedPieces)
-
-	return pieces, downloadedPieces, nil
+	return &Download{Pieces: pieces, DownloadedPieces: downloadedPieces, torrentInfo: torrentInfo}, nil
 }
 
-func startDownloadInner(
-	torrentInfo *torrent_info.TorrentInfo,
-	pieces *pieces.Pieces,
-	downloadedPieces *download.Download,
-) {
-	err := downloadedPieces.Prepare(pieces)
+func (download *Download) Start() {
+	err := download.DownloadedPieces.Prepare(download.Pieces)
 	if err != nil {
 		log.Fatalf("failed to prepare download files: %v", err)
 	}
 
-	piecesBitfield := pieces.GetBitfield()
+	piecesBitfield := download.Pieces.GetBitfield()
 	downloadedCount := (&piecesBitfield).SetPiecesCount()
 	log.Printf("Discovered %d already downloaded pieces", downloadedCount)
 
@@ -51,8 +51,12 @@ func startDownloadInner(
 
 	discoveredPeers := make(chan tracker.PeerInfo, discoveredPeersQueueSize)
 
-	for _, trackerURL := range torrentInfo.Trackers {
-		tracker := tracker.NewTracker(trackerURL, torrentInfo.InfoHash, torrentInfo.TotalLength, peerID)
+	for _, trackerURL := range download.torrentInfo.Trackers {
+		tracker := tracker.NewTracker(trackerURL,
+			download.torrentInfo.InfoHash,
+			download.torrentInfo.TotalLength,
+			peerID,
+		)
 		go tracker.ListenForPeers(discoveredPeers)
 	}
 
@@ -69,17 +73,12 @@ func startDownloadInner(
 
 		if !alreadyKnown {
 			knownPeers = append(knownPeers, newPeer)
-			go downloadFromPeer(&newPeer, torrentInfo, pieces, downloadedPieces)
+			go download.downloadFromPeer(&newPeer)
 		}
 	}
 }
 
-func downloadFromPeer(
-	peerInfo *tracker.PeerInfo,
-	torrentInfo *torrent_info.TorrentInfo,
-	pieces *pieces.Pieces,
-	downloadedPieces *download.Download,
-) {
+func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo) {
 	for {
 		peer := peer.Peer{}
 		err := peer.Connect(peerInfo)
@@ -88,7 +87,7 @@ func downloadFromPeer(
 			return
 		}
 
-		err = peer.Handshake(torrentInfo)
+		err = peer.Handshake(download.torrentInfo)
 		if err != nil {
 			log.Printf("failed to handshake with the peer: %v", err)
 			return
@@ -96,7 +95,7 @@ func downloadFromPeer(
 
 		log.Printf("connected to the peer %+v", peerInfo)
 
-		err = peer.StartExchange(torrentInfo, pieces, downloadedPieces)
+		err = peer.StartExchange(download.torrentInfo, download.Pieces, download.DownloadedPieces)
 		if err != nil {
 			log.Printf("failed to download data from peer: %v. reconnecting", err)
 		}

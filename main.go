@@ -28,12 +28,14 @@ func main() {
 		log.SetOutput(logFile)
 	}
 
-	pieces, downloadedPieces, err := single_download.StartDownload(*torrentFileName, *downloadFolderName)
-	if err != nil {
-		log.Fatalf("failed to start download: %v", err)
-	}
-
 	if *interactiveMode {
-		ui.StartUI(pieces, downloadedPieces)
+		ui.StartUI()
+	} else {
+		download, err := single_download.New(*torrentFileName, *downloadFolderName)
+		if err != nil {
+			log.Fatalf("failed to start download: %v", err)
+		}
+
+		download.Start()
 	}
 }

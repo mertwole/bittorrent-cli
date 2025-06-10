@@ -17,6 +17,61 @@ import (
 	"github.com/mertwole/bittorrent-cli/single_download"
 )
 
+func StartUI() {
+	download_1, _ := single_download.New("./data/lc.torrent", "./data")
+	download_2, _ := single_download.New("./data/kcd.torrent", "./data")
+	download_3, _ := single_download.New("./data/debian.torrent", "./data")
+
+	go download_1.Start()
+	go download_2.Start()
+	go download_3.Start()
+
+	downloadList := []list.Item{
+		downloadItem{model: download_1},
+		downloadItem{model: download_2},
+		downloadItem{model: download_3},
+	}
+
+	list := list.New(downloadList, downloadItemDelegate{}, 20, 20)
+
+	mainScreen := tea.NewProgram(mainScreen{downloadList: list})
+	mainScreen.Run()
+
+	os.Exit(0)
+}
+
+type mainScreen struct {
+	Width  int
+	Height int
+
+	downloadList list.Model
+}
+
+func (screen mainScreen) Init() tea.Cmd {
+	return tea.Batch(tea.EnterAltScreen, tickCmd())
+}
+
+func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	switch message := message.(type) {
+	case tea.KeyMsg:
+		switch message.String() {
+		case "ctrl+c", "q":
+			return screen, tea.Quit
+		}
+	case tea.WindowSizeMsg:
+		screen.Width = message.Width
+		screen.Height = message.Height
+	case tickMsg:
+		return screen, tickCmd()
+	}
+
+	return screen, nil
+}
+
+func (screen mainScreen) View() string {
+	return screen.downloadList.View()
+}
+
 type downloadItem struct {
 	model *single_download.Download
 }
@@ -89,63 +144,6 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		Render()
 
 	fmt.Fprintf(w, "%s\n%s", downloadProgressLabel, downloadProgress)
-}
-
-func StartUI() {
-	download_1, _ := single_download.New("./data/lc.torrent", "./data")
-	download_2, _ := single_download.New("./data/kcd.torrent", "./data")
-	download_3, _ := single_download.New("./data/debian.torrent", "./data")
-
-	go download_1.Start()
-	go download_2.Start()
-	go download_3.Start()
-
-	downloadList := []list.Item{
-		downloadItem{model: download_1},
-		downloadItem{model: download_2},
-		downloadItem{model: download_3},
-	}
-
-	list := list.New(downloadList, downloadItemDelegate{}, 20, 20)
-
-	mainScreen := tea.NewProgram(mainScreen{downloadList: list})
-	mainScreen.Run()
-
-	os.Exit(0)
-}
-
-type mainScreen struct {
-	Width  int
-	Height int
-
-	downloadList list.Model
-}
-
-func (screen mainScreen) Init() tea.Cmd {
-	return tea.Batch(tea.EnterAltScreen, tickCmd())
-}
-
-func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	switch message := message.(type) {
-	case tea.KeyMsg:
-		switch message.String() {
-		case "ctrl+c", "q":
-			return screen, tea.Quit
-		}
-	case tea.WindowSizeMsg:
-		screen.Width = message.Width
-		screen.Height = message.Height
-	case tickMsg:
-		return screen, tickCmd()
-	}
-
-	return screen, nil
-}
-
-const progressBarPadding int = 5
-
-func (screen mainScreen) View() string {
-	return screen.downloadList.View()
 }
 
 func composeDownloadedPiecesString(pcs *pieces.Pieces, targetLength int) string {

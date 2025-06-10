@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"os"
 	"time"
@@ -33,8 +34,11 @@ func StartUI() {
 	}
 
 	list := list.New(downloadList, downloadItemDelegate{}, 20, 20)
+	list.Title = "downloads"
+	list.SetFilteringEnabled(false)
+	list.SetShowStatusBar(false)
 
-	mainScreen := tea.NewProgram(mainScreen{downloadList: list})
+	mainScreen := tea.NewProgram(mainScreen{downloadList: &list})
 	mainScreen.Run()
 
 	os.Exit(0)
@@ -44,7 +48,7 @@ type mainScreen struct {
 	Width  int
 	Height int
 
-	downloadList list.Model
+	downloadList *list.Model
 }
 
 func (screen mainScreen) Init() tea.Cmd {
@@ -54,9 +58,17 @@ func (screen mainScreen) Init() tea.Cmd {
 func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.KeyMsg:
+		log.Printf("%s", message.String())
+
 		switch message.String() {
 		case "ctrl+c", "q":
 			return screen, tea.Quit
+		case "left":
+			screen.downloadList.PrevPage()
+			return screen, nil
+		case "right":
+			screen.downloadList.NextPage()
+			return screen, nil
 		}
 	case tea.WindowSizeMsg:
 		screen.Width = message.Width
@@ -65,10 +77,16 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return screen, tickCmd()
 	}
 
-	return screen, nil
+	var cmd tea.Cmd
+	*screen.downloadList, cmd = screen.downloadList.Update(message)
+
+	return screen, cmd
 }
 
 func (screen mainScreen) View() string {
+	screen.downloadList.SetHeight(screen.Height)
+	screen.downloadList.SetWidth(screen.Width)
+
 	return screen.downloadList.View()
 }
 

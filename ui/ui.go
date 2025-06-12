@@ -14,14 +14,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/mertwole/bittorrent-cli/bitfield"
 	"github.com/mertwole/bittorrent-cli/download"
-	"github.com/mertwole/bittorrent-cli/pieces"
 	"github.com/mertwole/bittorrent-cli/single_download"
 )
 
+const torrentFileExtension = ".torrent"
+const updateDownloadedPiecesPollInterval = time.Millisecond * 1000
+
 func StartUI() {
+	//runtime.LockOSThread()
+
 	download_1, _ := single_download.New("./data/lc.torrent", "./data")
-	download_2, _ := single_download.New("./data/kcd.torrent", "./data")
+	download_2, _ := single_download.New("./data/oni.torrent", "./data")
 	download_3, _ := single_download.New("./data/debian.torrent", "./data")
 
 	go download_1.Start()
@@ -29,9 +34,9 @@ func StartUI() {
 	go download_3.Start()
 
 	downloadList := []list.Item{
-		downloadItem{model: download_1},
-		downloadItem{model: download_2},
-		downloadItem{model: download_3},
+		downloadItem{model: download_1, downloadedPieces: bitfield.NewEmptyConcurrentBitfield(0)},
+		downloadItem{model: download_2, downloadedPieces: bitfield.NewEmptyConcurrentBitfield(0)},
+		downloadItem{model: download_3, downloadedPieces: bitfield.NewEmptyConcurrentBitfield(0)},
 	}
 
 	list := list.New(downloadList, downloadItemDelegate{}, 20, 20)
@@ -40,7 +45,7 @@ func StartUI() {
 	list.SetShowStatusBar(false)
 
 	filePicker := filepicker.New()
-	filePicker.AllowedTypes = []string{".torrent"}
+	filePicker.AllowedTypes = []string{torrentFileExtension}
 	filePicker.CurrentDirectory, _ = os.UserHomeDir()
 
 	mainScreen := tea.NewProgram(mainScreen{downloadList: &list, filePicker: &filePicker})
@@ -66,14 +71,40 @@ type additionRequest struct {
 func (screen mainScreen) Init() tea.Cmd {
 	filePickerCmd := screen.filePicker.Init()
 
+	go screen.updateDownloadedPieces()
+
 	return tea.Batch(tea.EnterAltScreen, tickCmd(), filePickerCmd)
+}
+
+func (screen *mainScreen) updateDownloadedPieces() {
+	for {
+		bitfields := make([]bitfield.Bitfield, 0)
+
+		for _, item := range screen.downloadList.Items() {
+			downloadItem, ok := item.(downloadItem)
+			if !ok {
+				continue
+			}
+
+			bitfields = append(bitfields, downloadItem.model.Pieces.GetBitfield())
+		}
+
+		for i, item := range screen.downloadList.Items() {
+			downloadItem, ok := item.(downloadItem)
+			if !ok {
+				continue
+			}
+
+			downloadItem.downloadedPieces.SetBitfield(bitfields[i])
+		}
+
+		time.Sleep(updateDownloadedPiecesPollInterval)
+	}
 }
 
 func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.KeyMsg:
-		log.Printf("%s", message.String())
-
 		switch message.String() {
 		case "ctrl+c", "q":
 			return screen, tea.Quit
@@ -90,6 +121,10 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		screen.Width = message.Width
 		screen.Height = message.Height
+
+		log.Printf("NEW SIZE: %d %d", message.Width, message.Height)
+
+		return screen, nil
 	case tickMsg:
 		return screen, tickCmd()
 	}
@@ -107,15 +142,25 @@ func (screen mainScreen) View() string {
 	if screen.additionRequest != nil {
 		return screen.filePicker.View()
 	} else {
-		screen.downloadList.SetHeight(screen.Height)
-		screen.downloadList.SetWidth(screen.Width)
+		startTime := time.Now()
 
-		return screen.downloadList.View()
+		log.Printf("View time(before): %v", time.Since(startTime))
+
+		log.Printf("RENDERED WITH SIZE: %d %d", screen.Width, screen.Height)
+
+		screen.downloadList.SetSize(screen.Width, screen.Height)
+
+		res := screen.downloadList.View()
+
+		log.Printf("View time: %v", time.Since(startTime))
+
+		return res
 	}
 }
 
 type downloadItem struct {
-	model *single_download.Download
+	model            *single_download.Download
+	downloadedPieces *bitfield.ConcurrentBitfield
 }
 
 func (i downloadItem) FilterValue() string { return "" }
@@ -143,16 +188,17 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	model := item.model
 
 	downloadedPieces := 0
-	totalPieces := model.Pieces.Length()
+	totalPieces := item.downloadedPieces.PieceCount()
+	piecesBitfield := item.downloadedPieces.GetBitfield()
 	for piece := range totalPieces {
-		if model.Pieces.GetState(piece) == pieces.Downloaded {
+		if piecesBitfield.ContainsPiece(piece) {
 			downloadedPieces++
 		}
 	}
 
 	var downloadProgressLabel string
 
-	progressBarWidth := 20 // TODO  screen.Width - progressBarPadding*2
+	progressBarWidth := m.Width() - 5
 	progressBar := ""
 
 	downloadStatus := model.DownloadedPieces.GetStatus()
@@ -171,7 +217,7 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 			ViewAs(float64(downloadStatus.Progress) / float64(downloadStatus.Total))
 	case download.Ready:
 		downloadProgressLabel = fmt.Sprintf("downloading: %d/%d", downloadedPieces, totalPieces)
-		progressBar = composeDownloadedPiecesString(model.Pieces, progressBarWidth)
+		progressBar = composeDownloadedPiecesString(item.downloadedPieces, progressBarWidth)
 	}
 
 	downloadProgressLabel = lipgloss.
@@ -188,8 +234,8 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	fmt.Fprintf(w, "%s\n%s", downloadProgressLabel, downloadProgress)
 }
 
-func composeDownloadedPiecesString(pcs *pieces.Pieces, targetLength int) string {
-	pieceCount := pcs.Length()
+func composeDownloadedPiecesString(bitfield *bitfield.ConcurrentBitfield, targetLength int) string {
+	pieceCount := bitfield.PieceCount()
 
 	str := ""
 	for block := range targetLength {
@@ -203,7 +249,7 @@ func composeDownloadedPiecesString(pcs *pieces.Pieces, targetLength int) string 
 		totalPieces := lastPiece - firstPiece + 1
 		totalDownloadedPieces := 0
 		for i := firstPiece; i <= lastPiece; i++ {
-			if pcs.GetState(i) == pieces.Downloaded {
+			if bitfield.ContainsPiece(i) {
 				totalDownloadedPieces++
 			}
 		}
@@ -229,7 +275,7 @@ func composeDownloadedPiecesString(pcs *pieces.Pieces, targetLength int) string 
 type tickMsg time.Time
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+	return tea.Tick(time.Millisecond*10, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }

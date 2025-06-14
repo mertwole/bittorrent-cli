@@ -45,8 +45,13 @@ func StartUI() {
 	filePicker := filepicker.New()
 	filePicker.AllowedTypes = []string{torrentFileExtension}
 	filePicker.CurrentDirectory, _ = os.UserHomeDir()
+	filePicker.AutoHeight = true
 
-	mainScreen := tea.NewProgram(mainScreen{downloadList: &list, filePicker: &filePicker})
+	mainScreen := tea.NewProgram(mainScreen{
+		downloadList:    &list,
+		filePicker:      &filePicker,
+		additionRequest: false,
+	})
 	mainScreen.Run()
 
 	os.Exit(0)
@@ -63,11 +68,9 @@ type mainScreen struct {
 }
 
 func (screen mainScreen) Init() tea.Cmd {
-	filePickerCmd := screen.filePicker.Init()
-
 	go screen.updateDownloadedPieces()
 
-	return tea.Batch(tea.EnterAltScreen, tickCmd(), filePickerCmd)
+	return tea.Batch(tea.EnterAltScreen, tickCmd())
 }
 
 func (screen *mainScreen) updateDownloadedPieces() {
@@ -97,57 +100,62 @@ func (screen *mainScreen) updateDownloadedPieces() {
 }
 
 func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	command := tea.Batch()
+
+	var downloadListCmd tea.Cmd
+	*screen.downloadList, downloadListCmd = screen.downloadList.Update(message)
+	command = tea.Batch(command, downloadListCmd)
+
+	var filePickerCmd tea.Cmd
+	*screen.filePicker, filePickerCmd = screen.filePicker.Update(message)
+	command = tea.Batch(command, filePickerCmd)
+
+	// TODO: Add key map to generate help automatically.
 	switch message := message.(type) {
 	case tea.KeyMsg:
 		switch message.String() {
 		case "ctrl+c", "q":
-			return screen, tea.Quit
+			command = tea.Batch(command, tea.Quit)
 		case "left":
 			screen.downloadList.PrevPage()
-			return screen, nil
 		case "right":
 			screen.downloadList.NextPage()
-			return screen, nil
 		case "+":
 			screen.additionRequest = true
-			return screen, nil
+
+			filePickerCmd := screen.filePicker.Init()
+
+			command = tea.Batch(command, filePickerCmd)
 		}
 	case tea.WindowSizeMsg:
 		screen.Width = message.Width
 		screen.Height = message.Height
-
-		return screen, nil
 	case tickMsg:
-		return screen, tickCmd()
-	default:
-		didSelect, filePath := screen.filePicker.DidSelectFile(message)
-		if didSelect {
-			screen.additionRequest = false
-
-			newDownload, err := single_download.New(filePath, "./data")
-			if err != nil {
-				// TODO: Show this error to the user.
-				log.Panicf("failed to add file to downloads: %v", err)
-			}
-
-			newItem := downloadItem{
-				model:            newDownload,
-				downloadedPieces: bitfield.NewEmptyConcurrentBitfield(0),
-			}
-			// TODO: Check if it's not duplicate.
-			screen.downloadList.InsertItem(math.MaxInt, newItem)
-
-			return screen, nil
-		}
+		command = tea.Batch(tickCmd())
 	}
 
-	var downloadListCmd tea.Cmd
-	var filePickerCmd tea.Cmd
+	didSelect, filePath := screen.filePicker.DidSelectFile(message)
+	if didSelect {
+		screen.additionRequest = false
 
-	*screen.downloadList, downloadListCmd = screen.downloadList.Update(message)
-	*screen.filePicker, filePickerCmd = screen.filePicker.Update(message)
+		// TODO: Determine download path.
+		newDownload, err := single_download.New(filePath, "./data")
+		if err != nil {
+			// TODO: Show this error to the user.
+			log.Panicf("failed to add file to downloads: %v", err)
+		}
 
-	return screen, tea.Batch(downloadListCmd, filePickerCmd)
+		go newDownload.Start()
+
+		newItem := downloadItem{
+			model:            newDownload,
+			downloadedPieces: bitfield.NewEmptyConcurrentBitfield(0),
+		}
+		// TODO: Check if it's not duplicate.
+		screen.downloadList.InsertItem(math.MaxInt, newItem)
+	}
+
+	return screen, command
 }
 
 func (screen mainScreen) View() string {
@@ -202,7 +210,7 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 	var downloadProgressLabel string
 
-	progressBarWidth := m.Width() - 5
+	progressBarWidth := m.Width()
 	progressBar := ""
 
 	downloadStatus := model.DownloadedPieces.GetStatus()

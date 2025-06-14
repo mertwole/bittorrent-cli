@@ -78,6 +78,10 @@ func (download *Download) Start() {
 	}
 }
 
+func (download *Download) GetTorrentName() string {
+	return download.torrentInfo.Name
+}
+
 func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo) {
 	for {
 		peer := peer.Peer{}

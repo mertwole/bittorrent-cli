@@ -205,32 +205,42 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	case download.PreparingFiles:
 		downloadProgressLabel = "preparing files"
 	case download.CheckingHashes:
-		downloadProgressLabel = fmt.Sprintf(
-			"checking pieces: %d/%d",
-			downloadStatus.Progress,
-			downloadStatus.Total,
-		)
+		downloadProgressLabel = "checking files"
 
 		progressBar = progress.
 			New(progress.WithWidth(progressBarWidth), progress.WithSolidFill("#66F27D")).
 			ViewAs(float64(downloadStatus.Progress) / float64(downloadStatus.Total))
 	case download.Ready:
-		downloadProgressLabel = fmt.Sprintf("downloading: %d/%d", downloadedPieces, totalPieces)
+		downloadProgressLabel = "downloading"
+
+		downloadPercent := float64(downloadedPieces) / float64(totalPieces) * 100.
+
+		maxPercentageLength := len(" 100.0%")
+		progressBarWidth -= maxPercentageLength
+
+		progress := fmt.Sprintf("%.1f%%", downloadPercent)
+		progress = fmt.Sprintf("%*s", maxPercentageLength, progress)
+
 		progressBar = composeDownloadedPiecesString(item.downloadedPieces, progressBarWidth)
+		progressBar += progress
 	}
 
-	downloadProgressLabel = lipgloss.
-		NewStyle().
+	nameLabel := model.GetTorrentName()
+
+	paddingLength := m.Width() - lipgloss.Width(nameLabel)
+	statusLabel := fmt.Sprintf("%s%*s", nameLabel, paddingLength, downloadProgressLabel)
+
+	statusLabel = lipgloss.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#4D756F", Dark: "#A5FAEC"}).
-		SetString(downloadProgressLabel).
-		Render()
+		Render(statusLabel)
+
 	downloadProgress := lipgloss.
 		NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#2E6B38", Dark: "#66F27D"}).
 		SetString(progressBar).
 		Render()
 
-	fmt.Fprintf(w, "%s\n%s", downloadProgressLabel, downloadProgress)
+	fmt.Fprintf(w, "%s\n%s", statusLabel, downloadProgress)
 }
 
 func composeDownloadedPiecesString(bitfield *bitfield.ConcurrentBitfield, targetLength int) string {

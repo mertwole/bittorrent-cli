@@ -86,11 +86,22 @@ func NewEmptyConcurrentBitfield(pieceCount int) *ConcurrentBitfield {
 	return &ConcurrentBitfield{inner: NewEmptyBitfield(pieceCount)}
 }
 
+func (bitfield *ConcurrentBitfield) PieceCount() int {
+	return bitfield.inner.pieceCount
+}
+
 func (bitfield *ConcurrentBitfield) GetBitfield() Bitfield {
 	bitfield.mutex.RLock()
 	defer bitfield.mutex.RUnlock()
 
 	return bitfield.inner
+}
+
+func (bitfield *ConcurrentBitfield) SetBitfield(newInner Bitfield) {
+	bitfield.mutex.Lock()
+	defer bitfield.mutex.Unlock()
+
+	bitfield.inner = newInner
 }
 
 func (bitfield *ConcurrentBitfield) AddPiece(piece int) {

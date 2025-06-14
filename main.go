@@ -5,15 +5,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/mertwole/bittorrent-cli/download"
-	"github.com/mertwole/bittorrent-cli/peer"
-	"github.com/mertwole/bittorrent-cli/pieces"
-	"github.com/mertwole/bittorrent-cli/torrent_info"
-	"github.com/mertwole/bittorrent-cli/tracker"
+	"github.com/mertwole/bittorrent-cli/single_download"
 	"github.com/mertwole/bittorrent-cli/ui"
 )
-
-const discoveredPeersQueueSize = 16
 
 const logFileName = "log"
 
@@ -34,84 +28,14 @@ func main() {
 		log.SetOutput(logFile)
 	}
 
-	torrentFile, err := os.Open(*torrentFileName)
-	if err != nil {
-		log.Fatal("Failed to open torrent file: ", err)
-	}
-
-	torrentInfo, err := torrent_info.Decode(torrentFile)
-	if err != nil {
-		log.Fatal("Failed to decode torrent file: ", err)
-	}
-
-	pieces := pieces.New(len(torrentInfo.Pieces))
-	downloadedPieces := download.NewDownload(torrentInfo, *downloadFolderName)
-
 	if *interactiveMode {
-		go ui.StartUI(pieces, downloadedPieces)
-	}
-
-	err = downloadedPieces.Prepare(pieces)
-	if err != nil {
-		log.Fatal("Failed to prepare download files: ", err)
-	}
-
-	piecesBitfield := pieces.GetBitfield()
-	downloadedCount := (&piecesBitfield).SetPiecesCount()
-	log.Printf("Discovered %d already downloaded pieces", downloadedCount)
-
-	peerID := [20]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-
-	discoveredPeers := make(chan tracker.PeerInfo, discoveredPeersQueueSize)
-
-	for _, trackerURL := range torrentInfo.Trackers {
-		tracker := tracker.NewTracker(trackerURL, torrentInfo.InfoHash, torrentInfo.TotalLength, peerID)
-		go tracker.ListenForPeers(discoveredPeers)
-	}
-
-	knownPeers := make([]tracker.PeerInfo, 0)
-	for {
-		newPeer := <-discoveredPeers
-		alreadyKnown := false
-		for _, peer := range knownPeers {
-			if peer.IP.Equal(newPeer.IP) {
-				alreadyKnown = true
-				break
-			}
-		}
-
-		if !alreadyKnown {
-			knownPeers = append(knownPeers, newPeer)
-			go downloadFromPeer(&newPeer, torrentInfo, pieces, downloadedPieces)
-		}
-	}
-}
-
-func downloadFromPeer(
-	peerInfo *tracker.PeerInfo,
-	torrentInfo *torrent_info.TorrentInfo,
-	pieces *pieces.Pieces,
-	downloadedPieces *download.Download,
-) {
-	for {
-		peer := peer.Peer{}
-		err := peer.Connect(peerInfo)
+		ui.StartUI()
+	} else {
+		download, err := single_download.New(*torrentFileName, *downloadFolderName)
 		if err != nil {
-			log.Printf("Failed to connect to the peer: %v", err)
-			return
+			log.Fatalf("failed to start download: %v", err)
 		}
 
-		err = peer.Handshake(torrentInfo)
-		if err != nil {
-			log.Printf("Failed to handshake with the peer: %v", err)
-			return
-		}
-
-		log.Printf("connected to the peer %+v", peerInfo)
-
-		err = peer.StartExchange(torrentInfo, pieces, downloadedPieces)
-		if err != nil {
-			log.Printf("Failed to download data from peer: %v. reconnecting", err)
-		}
+		download.Start()
 	}
 }

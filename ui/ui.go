@@ -2,20 +2,43 @@ package ui
 
 import (
 	"fmt"
+	"io"
+	"log"
 	"math"
 	"os"
 	"time"
 
+	"github.com/charmbracelet/bubbles/filepicker"
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/mertwole/bittorrent-cli/bitfield"
 	"github.com/mertwole/bittorrent-cli/download"
-	"github.com/mertwole/bittorrent-cli/pieces"
+	"github.com/mertwole/bittorrent-cli/single_download"
 )
 
-func StartUI(pieces *pieces.Pieces, download *download.Download) {
-	mainScreen := tea.NewProgram(mainScreen{pieces: pieces, download: download})
+const torrentFileExtension = ".torrent"
+const updateDownloadedPiecesPollInterval = time.Millisecond * 100
+
+func StartUI() {
+	list := list.New(make([]list.Item, 0), downloadItemDelegate{}, 20, 20)
+	list.SetShowTitle(false)
+	list.SetFilteringEnabled(false)
+	list.SetShowStatusBar(false)
+	list.SetShowHelp(false)
+
+	filePicker := filepicker.New()
+	filePicker.AllowedTypes = []string{torrentFileExtension}
+	filePicker.CurrentDirectory, _ = os.UserHomeDir()
+	filePicker.AutoHeight = true
+
+	mainScreen := tea.NewProgram(mainScreen{
+		downloadList:    &list,
+		filePicker:      &filePicker,
+		additionRequest: false,
+	})
 	mainScreen.Run()
 
 	os.Exit(0)
@@ -25,48 +48,159 @@ type mainScreen struct {
 	Width  int
 	Height int
 
-	pieces   *pieces.Pieces
-	download *download.Download
+	downloadList *list.Model
+	filePicker   *filepicker.Model
+
+	additionRequest bool
 }
 
 func (screen mainScreen) Init() tea.Cmd {
+	go screen.updateDownloadedPieces()
+
 	return tea.Batch(tea.EnterAltScreen, tickCmd())
 }
 
+func (screen *mainScreen) updateDownloadedPieces() {
+	for {
+		bitfields := make([]bitfield.Bitfield, 0)
+
+		for _, item := range screen.downloadList.Items() {
+			downloadItem, ok := item.(downloadItem)
+			if !ok {
+				continue
+			}
+
+			bitfields = append(bitfields, downloadItem.model.Pieces.GetBitfield())
+		}
+
+		for i, item := range screen.downloadList.Items() {
+			downloadItem, ok := item.(downloadItem)
+			if !ok {
+				continue
+			}
+
+			downloadItem.downloadedPieces.SetBitfield(bitfields[i])
+		}
+
+		time.Sleep(updateDownloadedPiecesPollInterval)
+	}
+}
+
 func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	command := tea.Batch()
+
+	var downloadListCmd tea.Cmd
+	*screen.downloadList, downloadListCmd = screen.downloadList.Update(message)
+	command = tea.Batch(command, downloadListCmd)
+
+	var filePickerCmd tea.Cmd
+	*screen.filePicker, filePickerCmd = screen.filePicker.Update(message)
+	command = tea.Batch(command, filePickerCmd)
+
+	// TODO: Add key map to generate help automatically.
 	switch message := message.(type) {
 	case tea.KeyMsg:
 		switch message.String() {
 		case "ctrl+c", "q":
-			return screen, tea.Quit
+			command = tea.Batch(command, tea.Quit)
+		case "left":
+			screen.downloadList.PrevPage()
+		case "right":
+			screen.downloadList.NextPage()
+		case "+":
+			screen.additionRequest = true
+
+			filePickerCmd := screen.filePicker.Init()
+
+			command = tea.Batch(command, filePickerCmd)
 		}
 	case tea.WindowSizeMsg:
 		screen.Width = message.Width
 		screen.Height = message.Height
 	case tickMsg:
-		return screen, tickCmd()
+		command = tea.Batch(tickCmd())
 	}
 
-	return screen, nil
+	didSelect, filePath := screen.filePicker.DidSelectFile(message)
+	if didSelect {
+		screen.additionRequest = false
+
+		// TODO: Determine download path.
+		newDownload, err := single_download.New(filePath, "./data")
+		if err != nil {
+			// TODO: Show this error to the user.
+			log.Panicf("failed to add file to downloads: %v", err)
+		}
+
+		go newDownload.Start()
+
+		newItem := downloadItem{
+			model:            newDownload,
+			downloadedPieces: bitfield.NewEmptyConcurrentBitfield(0),
+		}
+		// TODO: Check if it's not duplicate.
+		screen.downloadList.InsertItem(math.MaxInt, newItem)
+	}
+
+	return screen, command
 }
 
-const progressBarPadding int = 5
-
 func (screen mainScreen) View() string {
+	if screen.additionRequest {
+		return screen.filePicker.View()
+	} else {
+		screen.downloadList.SetSize(screen.Width, screen.Height)
+
+		res := screen.downloadList.View()
+
+		return res
+	}
+}
+
+type downloadItem struct {
+	model            *single_download.Download
+	downloadedPieces *bitfield.ConcurrentBitfield
+}
+
+func (i downloadItem) FilterValue() string { return "" }
+
+type downloadItemDelegate struct{}
+
+func (d downloadItemDelegate) Height() int {
+	return 2
+}
+
+func (d downloadItemDelegate) Spacing() int {
+	return 1
+}
+
+func (d downloadItemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd {
+	return nil
+}
+
+func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
+	item, ok := listItem.(downloadItem)
+	if !ok {
+		return
+	}
+
+	model := item.model
+
 	downloadedPieces := 0
-	totalPieces := screen.pieces.Length()
+	totalPieces := item.downloadedPieces.PieceCount()
+	piecesBitfield := item.downloadedPieces.GetBitfield()
 	for piece := range totalPieces {
-		if screen.pieces.GetState(piece) == pieces.Downloaded {
+		if piecesBitfield.ContainsPiece(piece) {
 			downloadedPieces++
 		}
 	}
 
 	var downloadProgressLabel string
 
-	progressBarWidth := screen.Width - progressBarPadding*2
+	progressBarWidth := m.Width()
 	progressBar := ""
 
-	downloadStatus := screen.download.GetStatus()
+	downloadStatus := model.DownloadedPieces.GetStatus()
 	switch downloadStatus.State {
 	case download.PreparingFiles:
 		downloadProgressLabel = "preparing files"
@@ -82,7 +216,7 @@ func (screen mainScreen) View() string {
 			ViewAs(float64(downloadStatus.Progress) / float64(downloadStatus.Total))
 	case download.Ready:
 		downloadProgressLabel = fmt.Sprintf("downloading: %d/%d", downloadedPieces, totalPieces)
-		progressBar = composeDownloadedPiecesString(screen.pieces, progressBarWidth)
+		progressBar = composeDownloadedPiecesString(item.downloadedPieces, progressBarWidth)
 	}
 
 	downloadProgressLabel = lipgloss.
@@ -96,21 +230,11 @@ func (screen mainScreen) View() string {
 		SetString(progressBar).
 		Render()
 
-	return lipgloss.
-		NewStyle().
-		SetString(
-			lipgloss.JoinVertical(lipgloss.Left, downloadProgressLabel, downloadProgress),
-		).
-		AlignHorizontal(lipgloss.Left).
-		AlignVertical(lipgloss.Center).
-		Width(screen.Width).
-		Height(screen.Height).
-		Padding(0, progressBarPadding).
-		Render()
+	fmt.Fprintf(w, "%s\n%s", downloadProgressLabel, downloadProgress)
 }
 
-func composeDownloadedPiecesString(pcs *pieces.Pieces, targetLength int) string {
-	pieceCount := pcs.Length()
+func composeDownloadedPiecesString(bitfield *bitfield.ConcurrentBitfield, targetLength int) string {
+	pieceCount := bitfield.PieceCount()
 
 	str := ""
 	for block := range targetLength {
@@ -124,7 +248,7 @@ func composeDownloadedPiecesString(pcs *pieces.Pieces, targetLength int) string 
 		totalPieces := lastPiece - firstPiece + 1
 		totalDownloadedPieces := 0
 		for i := firstPiece; i <= lastPiece; i++ {
-			if pcs.GetState(i) == pieces.Downloaded {
+			if bitfield.ContainsPiece(i) {
 				totalDownloadedPieces++
 			}
 		}
@@ -150,7 +274,7 @@ func composeDownloadedPiecesString(pcs *pieces.Pieces, targetLength int) string 
 type tickMsg time.Time
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+	return tea.Tick(time.Millisecond*10, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }

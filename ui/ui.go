@@ -167,7 +167,7 @@ func (i downloadItem) FilterValue() string { return "" }
 type downloadItemDelegate struct{}
 
 func (d downloadItemDelegate) Height() int {
-	return 2
+	return 3
 }
 
 func (d downloadItemDelegate) Spacing() int {
@@ -219,6 +219,13 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		progressBar = composeDownloadedPiecesString(item.downloadedPieces, progressBarWidth)
 	}
 
+	nameLabel := model.GetTorrentName()
+
+	nameLabel = lipgloss.
+		NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#4D756F", Dark: "#A5FAEC"}).
+		SetString(nameLabel).
+		Render()
 	downloadProgressLabel = lipgloss.
 		NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#4D756F", Dark: "#A5FAEC"}).
@@ -230,7 +237,7 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		SetString(progressBar).
 		Render()
 
-	fmt.Fprintf(w, "%s\n%s", downloadProgressLabel, downloadProgress)
+	fmt.Fprintf(w, "%s\n%s\n%s", nameLabel, downloadProgressLabel, downloadProgress)
 }
 
 func composeDownloadedPiecesString(bitfield *bitfield.ConcurrentBitfield, targetLength int) string {

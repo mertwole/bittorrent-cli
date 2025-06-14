@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sync/atomic"
 
 	"github.com/mertwole/bittorrent-cli/download"
 	"github.com/mertwole/bittorrent-cli/peer"
@@ -19,8 +18,6 @@ type Download struct {
 	Pieces           *pieces.Pieces
 	DownloadedPieces *download.Download
 	torrentInfo      *torrent_info.TorrentInfo
-
-	peerCount atomic.Int32
 }
 
 func New(fileName string, downloadFolderName string) (*Download, error) {
@@ -81,10 +78,6 @@ func (download *Download) Start() {
 	}
 }
 
-func (download *Download) GetPeerCount() int {
-	return int(download.peerCount.Load())
-}
-
 func (download *Download) GetTorrentName() string {
 	return download.torrentInfo.Name
 }
@@ -106,11 +99,8 @@ func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo) {
 
 		log.Printf("connected to the peer %+v", peerInfo)
 
-		download.peerCount.Add(1)
-
 		err = peer.StartExchange(download.torrentInfo, download.Pieces, download.DownloadedPieces)
 		if err != nil {
-			download.peerCount.Add(-1)
 			log.Printf("failed to download data from peer: %v. reconnecting", err)
 		}
 	}

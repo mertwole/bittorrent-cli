@@ -20,27 +20,14 @@ import (
 )
 
 const torrentFileExtension = ".torrent"
-const updateDownloadedPiecesPollInterval = time.Millisecond * 1000
+const updateDownloadedPiecesPollInterval = time.Millisecond * 100
 
 func StartUI() {
-	download_1, _ := single_download.New("./data/lc.torrent", "./data")
-	download_2, _ := single_download.New("./data/oni.torrent", "./data")
-	download_3, _ := single_download.New("./data/debian.torrent", "./data")
-
-	go download_1.Start()
-	go download_2.Start()
-	go download_3.Start()
-
-	downloadList := []list.Item{
-		downloadItem{model: download_1, downloadedPieces: bitfield.NewEmptyConcurrentBitfield(0)},
-		downloadItem{model: download_2, downloadedPieces: bitfield.NewEmptyConcurrentBitfield(0)},
-		downloadItem{model: download_3, downloadedPieces: bitfield.NewEmptyConcurrentBitfield(0)},
-	}
-
-	list := list.New(downloadList, downloadItemDelegate{}, 20, 20)
+	list := list.New(make([]list.Item, 0), downloadItemDelegate{}, 20, 20)
 	list.SetShowTitle(false)
 	list.SetFilteringEnabled(false)
 	list.SetShowStatusBar(false)
+	list.SetShowHelp(false)
 
 	filePicker := filepicker.New()
 	filePicker.AllowedTypes = []string{torrentFileExtension}

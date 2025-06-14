@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"os"
 	"time"
@@ -122,8 +121,6 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		screen.Width = message.Width
 		screen.Height = message.Height
 
-		log.Printf("NEW SIZE: %d %d", message.Width, message.Height)
-
 		return screen, nil
 	case tickMsg:
 		return screen, tickCmd()
@@ -142,17 +139,9 @@ func (screen mainScreen) View() string {
 	if screen.additionRequest != nil {
 		return screen.filePicker.View()
 	} else {
-		startTime := time.Now()
-
-		log.Printf("View time(before): %v", time.Since(startTime))
-
-		log.Printf("RENDERED WITH SIZE: %d %d", screen.Width, screen.Height)
-
 		screen.downloadList.SetSize(screen.Width, screen.Height)
 
 		res := screen.downloadList.View()
-
-		log.Printf("View time: %v", time.Since(startTime))
 
 		return res
 	}

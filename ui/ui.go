@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"os"
 	"time"
@@ -22,8 +23,6 @@ const torrentFileExtension = ".torrent"
 const updateDownloadedPiecesPollInterval = time.Millisecond * 1000
 
 func StartUI() {
-	//runtime.LockOSThread()
-
 	download_1, _ := single_download.New("./data/lc.torrent", "./data")
 	download_2, _ := single_download.New("./data/oni.torrent", "./data")
 	download_3, _ := single_download.New("./data/debian.torrent", "./data")
@@ -39,7 +38,7 @@ func StartUI() {
 	}
 
 	list := list.New(downloadList, downloadItemDelegate{}, 20, 20)
-	list.Title = "downloads"
+	list.SetShowTitle(false)
 	list.SetFilteringEnabled(false)
 	list.SetShowStatusBar(false)
 
@@ -60,11 +59,7 @@ type mainScreen struct {
 	downloadList *list.Model
 	filePicker   *filepicker.Model
 
-	additionRequest *additionRequest
-}
-
-type additionRequest struct {
-	filePath string
+	additionRequest bool
 }
 
 func (screen mainScreen) Init() tea.Cmd {
@@ -114,7 +109,7 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			screen.downloadList.NextPage()
 			return screen, nil
 		case "+":
-			screen.additionRequest = &additionRequest{}
+			screen.additionRequest = true
 			return screen, nil
 		}
 	case tea.WindowSizeMsg:
@@ -124,6 +119,26 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return screen, nil
 	case tickMsg:
 		return screen, tickCmd()
+	default:
+		didSelect, filePath := screen.filePicker.DidSelectFile(message)
+		if didSelect {
+			screen.additionRequest = false
+
+			newDownload, err := single_download.New(filePath, "./data")
+			if err != nil {
+				// TODO: Show this error to the user.
+				log.Panicf("failed to add file to downloads: %v", err)
+			}
+
+			newItem := downloadItem{
+				model:            newDownload,
+				downloadedPieces: bitfield.NewEmptyConcurrentBitfield(0),
+			}
+			// TODO: Check if it's not duplicate.
+			screen.downloadList.InsertItem(math.MaxInt, newItem)
+
+			return screen, nil
+		}
 	}
 
 	var downloadListCmd tea.Cmd
@@ -136,7 +151,7 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (screen mainScreen) View() string {
-	if screen.additionRequest != nil {
+	if screen.additionRequest {
 		return screen.filePicker.View()
 	} else {
 		screen.downloadList.SetSize(screen.Width, screen.Height)

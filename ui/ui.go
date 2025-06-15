@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/filepicker"
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,11 +25,20 @@ const torrentFileExtension = ".torrent"
 const updateDownloadedPiecesPollInterval = time.Millisecond * 100
 
 func StartUI() {
-	list := list.New(make([]list.Item, 0), downloadItemDelegate{}, 20, 20)
-	list.SetShowTitle(false)
-	list.SetFilteringEnabled(false)
-	list.SetShowStatusBar(false)
-	list.SetShowHelp(false)
+	keyMap := defaultKeyMap()
+
+	newList := list.New(make([]list.Item, 0), downloadItemDelegate{}, 20, 20)
+	newList.SetShowTitle(false)
+	newList.SetFilteringEnabled(false)
+	newList.SetShowStatusBar(false)
+	newList.SetShowHelp(false)
+
+	newList.KeyMap = list.KeyMap{
+		CursorUp:   keyMap.moveUp,
+		CursorDown: keyMap.moveDown,
+		NextPage:   keyMap.nextPage,
+		PrevPage:   keyMap.previousPage,
+	}
 
 	filePicker := filepicker.New()
 	filePicker.AllowedTypes = []string{torrentFileExtension}
@@ -35,8 +46,10 @@ func StartUI() {
 	filePicker.AutoHeight = true
 
 	mainScreen := tea.NewProgram(mainScreen{
-		downloadList:    &list,
+		downloadList:    &newList,
 		filePicker:      &filePicker,
+		keyMap:          keyMap,
+		help:            help.New(),
 		additionRequest: false,
 	})
 	mainScreen.Run()
@@ -50,6 +63,9 @@ type mainScreen struct {
 
 	downloadList *list.Model
 	filePicker   *filepicker.Model
+
+	keyMap keyMap
+	help   help.Model
 
 	additionRequest bool
 }
@@ -93,25 +109,24 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	*screen.downloadList, downloadListCmd = screen.downloadList.Update(message)
 	command = tea.Batch(command, downloadListCmd)
 
+	var paginatorCmd tea.Cmd
+	screen.downloadList.Paginator, paginatorCmd = screen.downloadList.Paginator.Update(message)
+	command = tea.Batch(command, paginatorCmd)
+
 	var filePickerCmd tea.Cmd
 	*screen.filePicker, filePickerCmd = screen.filePicker.Update(message)
 	command = tea.Batch(command, filePickerCmd)
 
-	// TODO: Add key map to generate help automatically.
 	switch message := message.(type) {
 	case tea.KeyMsg:
-		switch message.String() {
-		case "ctrl+c", "q":
+		switch {
+		case key.Matches(message, screen.keyMap.quit):
 			command = tea.Batch(command, tea.Quit)
-		case "left":
-			screen.downloadList.PrevPage()
-		case "right":
-			screen.downloadList.NextPage()
-		case "+":
+		case key.Matches(message, screen.keyMap.toggleHelp):
+			screen.help.ShowAll = !screen.help.ShowAll
+		case key.Matches(message, screen.keyMap.addTorrent):
 			screen.additionRequest = true
-
 			filePickerCmd := screen.filePicker.Init()
-
 			command = tea.Batch(command, filePickerCmd)
 		}
 	case tea.WindowSizeMsg:
@@ -149,11 +164,14 @@ func (screen mainScreen) View() string {
 	if screen.additionRequest {
 		return screen.filePicker.View()
 	} else {
-		screen.downloadList.SetSize(screen.Width, screen.Height)
+		screen.help.Width = screen.Width
 
-		res := screen.downloadList.View()
+		help := screen.help.View(screen.keyMap)
+		helpHeight := lipgloss.Height(help)
 
-		return res
+		screen.downloadList.SetSize(screen.Width, screen.Height-helpHeight)
+
+		return screen.downloadList.View() + "\n" + help
 	}
 }
 
@@ -197,7 +215,13 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 	var downloadProgressLabel string
 
-	progressBarWidth := m.Width()
+	totalWidth := m.Width()
+
+	if index == m.Index() {
+		totalWidth -= 2
+	}
+
+	progressBarWidth := totalWidth
 	progressBar := ""
 
 	downloadStatus := model.DownloadedPieces.GetStatus()
@@ -227,8 +251,13 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 	nameLabel := model.GetTorrentName()
 
-	paddingLength := m.Width() - lipgloss.Width(nameLabel)
+	paddingLength := totalWidth - lipgloss.Width(nameLabel)
 	statusLabel := fmt.Sprintf("%s%*s", nameLabel, paddingLength, downloadProgressLabel)
+
+	if index == m.Index() {
+		statusLabel = "┆ " + statusLabel
+		progressBar = "┆ " + progressBar
+	}
 
 	statusLabel = lipgloss.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#4D756F", Dark: "#A5FAEC"}).

@@ -63,7 +63,7 @@ func (download *Download) Start() {
 
 	// TODO: Process errors.
 	lsdErrors := make(chan error)
-	go lsd.StartAnnounce(download.torrentInfo.InfoHash, lsdErrors)
+	go lsd.StartDiscovery(download.torrentInfo.InfoHash, lsdErrors)
 
 	knownPeers := make([]tracker.PeerInfo, 0)
 	for {

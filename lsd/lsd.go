@@ -38,8 +38,10 @@ func formatRequest(host string, port uint16, infoHashes [][sha1.Size]byte, cooki
 }
 
 // TODO: Accept multiple info hashes.
-func StartAnnounce(infoHash [sha1.Size]byte, errors chan<- error) {
+func StartDiscovery(infoHash [sha1.Size]byte, errors chan<- error) {
 	udpAddr := net.UDPAddrFromAddrPort(multicastAddressIpv4())
+
+	go listenAnnouncements(*udpAddr, errors)
 
 	infoHashes := [1][sha1.Size]byte{infoHash}
 	request := formatRequest(udpAddr.String(), 6969, infoHashes[:], "")
@@ -56,7 +58,35 @@ func StartAnnounce(infoHash [sha1.Size]byte, errors chan<- error) {
 			errors <- fmt.Errorf("failed to send request: %w", err)
 			return
 		}
+
+		time.Sleep(announceInterval)
+	}
+}
+
+// TODO: Listen on all interfaces participating in file exchange.
+func listenAnnouncements(address net.UDPAddr, errors chan<- error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		errors <- fmt.Errorf("failed to get network interfaces: %w", err)
+		return
+	}
+	if len(interfaces) == 0 {
+		errors <- fmt.Errorf("no network interfaces found: %w", err)
+		return
 	}
 
-	time.Sleep(announceInterval)
+	conn, err := net.ListenMulticastUDP("udp", &interfaces[0], &address)
+	if err != nil {
+		errors <- fmt.Errorf("failed to listen multicast address: %w", err)
+		return
+	}
+
+	for {
+		buffer := make([]byte, 1024)
+		_, err := conn.Read(buffer)
+		if err != nil {
+			errors <- fmt.Errorf("failed to read from UDP socket: %w", err)
+			return
+		}
+	}
 }

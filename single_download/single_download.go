@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/mertwole/bittorrent-cli/download"
+	"github.com/mertwole/bittorrent-cli/lsd"
 	"github.com/mertwole/bittorrent-cli/peer"
 	"github.com/mertwole/bittorrent-cli/pieces"
 	"github.com/mertwole/bittorrent-cli/torrent_info"
@@ -59,6 +60,10 @@ func (download *Download) Start() {
 		)
 		go tracker.ListenForPeers(discoveredPeers)
 	}
+
+	// TODO: Process errors.
+	lsdErrors := make(chan error)
+	go lsd.StartAnnounce(download.torrentInfo.InfoHash, lsdErrors)
 
 	knownPeers := make([]tracker.PeerInfo, 0)
 	for {

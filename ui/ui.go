@@ -215,7 +215,13 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 	var downloadProgressLabel string
 
-	progressBarWidth := m.Width()
+	totalWidth := m.Width()
+
+	if index == m.Index() {
+		totalWidth -= 2
+	}
+
+	progressBarWidth := totalWidth
 	progressBar := ""
 
 	downloadStatus := model.DownloadedPieces.GetStatus()
@@ -245,8 +251,13 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 	nameLabel := model.GetTorrentName()
 
-	paddingLength := m.Width() - lipgloss.Width(nameLabel)
+	paddingLength := totalWidth - lipgloss.Width(nameLabel)
 	statusLabel := fmt.Sprintf("%s%*s", nameLabel, paddingLength, downloadProgressLabel)
+
+	if index == m.Index() {
+		statusLabel = "┆ " + statusLabel
+		progressBar = "┆ " + progressBar
+	}
 
 	statusLabel = lipgloss.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#4D756F", Dark: "#A5FAEC"}).

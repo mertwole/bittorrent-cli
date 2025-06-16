@@ -14,7 +14,7 @@ import (
 
 const announceInterval = time.Second * 1
 const readMessageBufferSize = 2048
-const listeningOnPort = 6969
+const listeningOnPort = 6881
 const multicastPort = 6771
 
 func multicastAddressIpv4() netip.AddrPort {

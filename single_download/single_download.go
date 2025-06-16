@@ -134,7 +134,7 @@ func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo, connectio
 			return
 		}
 
-		log.Printf("connected to the peer %+v", peerInfo)
+		log.Printf("handshaked with the peer %+v", peerInfo)
 
 		err = peer.StartExchange(download.torrentInfo, download.Pieces, download.DownloadedPieces)
 		if err != nil {
@@ -169,6 +169,8 @@ func (download *Download) acceptConnectionRequests(connectedPeers chan<- connect
 		remoteIP := remoteAddrPort.Addr().As4()
 
 		peerInfo := tracker.PeerInfo{IP: remoteIP[:], Port: remoteAddrPort.Port()}
+
+		log.Printf("accepted TCP connection from %+v", peerInfo)
 
 		connectedPeers <- connectedPeer{info: peerInfo, connection: &conn}
 	}

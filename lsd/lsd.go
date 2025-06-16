@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net"
 	"net/netip"
 	"strconv"
@@ -16,7 +17,8 @@ import (
 	"golang.org/x/net/ipv4"
 )
 
-const announceInterval = time.Second * 1
+// TODO: Set a bigger time as specified in the BEP14.
+const announceInterval = time.Second * 5
 const readMessageBufferSize = 2048
 const multicastPort = 6771
 
@@ -36,14 +38,15 @@ func multicastAddressIpv6() netip.AddrPort {
 func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.PeerInfo, errors chan<- error) {
 	udpAddr := net.UDPAddrFromAddrPort(multicastAddressIpv4())
 
-	go listenAnnouncements(*udpAddr, discoveredPeers, errors)
+	cookie := strconv.FormatInt(rand.Int64(), 36)
+	go listenAnnouncements(*udpAddr, discoveredPeers, cookie, errors)
 
 	infoHashes := [1][sha1.Size]byte{infoHash}
 	message := btSearchMessage{
 		host:       udpAddr.String(),
 		port:       global_params.ConnectionListenPort,
 		infoHashes: infoHashes[:],
-		cookie:     "",
+		cookie:     cookie,
 	}
 	request := formatMessage(message)
 
@@ -65,7 +68,12 @@ func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.Pee
 }
 
 // TODO: Listen on all interfaces participating in file exchange.
-func listenAnnouncements(address net.UDPAddr, discoveredPeers chan<- tracker.PeerInfo, errors chan<- error) {
+func listenAnnouncements(
+	address net.UDPAddr,
+	discoveredPeers chan<- tracker.PeerInfo,
+	cookie string,
+	errors chan<- error,
+) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		errors <- fmt.Errorf("failed to get network interfaces: %w", err)
@@ -114,7 +122,7 @@ func listenAnnouncements(address net.UDPAddr, discoveredPeers chan<- tracker.Pee
 			continue
 		}
 
-		if packetConn.LocalAddr() == source {
+		if message.cookie == cookie {
 			continue
 		}
 
@@ -138,14 +146,19 @@ type btSearchMessage struct {
 	cookie     string
 }
 
+const (
+	portHeader   = "Port: "
+	cookieHeader = "cookie: "
+)
+
 func formatMessage(message btSearchMessage) string {
 	messageString := "BT-SEARCH * HTTP/1.1\r\n"
 	messageString += fmt.Sprintf("Host: %s\r\n", message.host)
-	messageString += fmt.Sprintf("Port: %d\r\n", message.port)
+	messageString += fmt.Sprintf("%s%d\r\n", portHeader, message.port)
 	for _, infoHash := range message.infoHashes {
 		messageString += fmt.Sprintf("Infohash: %s\r\n", hex.EncodeToString(infoHash[:]))
 	}
-	messageString += fmt.Sprintf("cookie: %s\r\n", message.cookie)
+	messageString += fmt.Sprintf("%s%s\r\n", cookieHeader, message.cookie)
 	messageString += "\r\n"
 	messageString += "\r\n"
 
@@ -156,19 +169,32 @@ func parseMessage(messageString string) (btSearchMessage, error) {
 	message := btSearchMessage{}
 
 	lines := strings.Split(messageString, "\r\n")
+
 	for _, line := range lines {
-		switch {
-		case strings.Contains(line, "Port"):
-			line = line[len("Port: "):]
-			port, err := strconv.ParseUint(line, 10, 16)
+		if remaining, ok := trimPrefix(line, portHeader); ok {
+			port, err := strconv.ParseUint(remaining, 10, 16)
 			if err != nil {
 				return message, fmt.Errorf("failed to parse port: %w", err)
 			}
 
 			message.port = uint16(port)
+		} else if remaining, ok = trimPrefix(line, cookieHeader); ok {
+			message.cookie = remaining
 		}
 		// TODO: Parse other headers.
 	}
 
 	return message, nil
+}
+
+func trimPrefix(str, prefix string) (remaining string, ok bool) {
+	if len(str) < len(prefix) {
+		return "", false
+	}
+
+	if str[:len(prefix)] != prefix {
+		return "", false
+	}
+
+	return str[len(prefix):], true
 }

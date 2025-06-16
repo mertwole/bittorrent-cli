@@ -139,7 +139,7 @@ func listenAnnouncements(
 			continue
 		}
 
-		// TODO: Validate message.
+		// TODO: Validate message.host?
 
 		sourceAddress := source.String()
 		sourceAddrPort, err := netip.ParseAddrPort(sourceAddress)
@@ -163,11 +163,12 @@ const (
 	portHeader     = "Port: "
 	cookieHeader   = "cookie: "
 	infohashHeader = "Infohash: "
+	hostHeader     = "Host: "
 )
 
 func formatMessage(message btSearchMessage) string {
 	messageString := "BT-SEARCH * HTTP/1.1\r\n"
-	messageString += fmt.Sprintf("Host: %s\r\n", message.host)
+	messageString += fmt.Sprintf("%s%s\r\n", hostHeader, message.host)
 	messageString += fmt.Sprintf("%s%d\r\n", portHeader, message.port)
 	for _, infoHash := range message.infoHashes {
 		messageString += fmt.Sprintf("%s%s\r\n", infohashHeader, hex.EncodeToString(infoHash[:]))
@@ -209,8 +210,9 @@ func parseMessage(messageString string) (btSearchMessage, error) {
 			}
 
 			message.infoHashes = append(message.infoHashes, [20]byte(infoHash))
+		} else if remaining, ok = trimPrefix(line, hostHeader); ok {
+			message.host = remaining
 		}
-		// TODO: Parse other headers.
 	}
 
 	return message, nil

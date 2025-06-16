@@ -7,9 +7,12 @@ import (
 	"log"
 	"net"
 	"net/netip"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mertwole/bittorrent-cli/global_params"
+	"github.com/mertwole/bittorrent-cli/tracker"
 	"golang.org/x/net/ipv4"
 )
 
@@ -29,28 +32,20 @@ func multicastAddressIpv6() netip.AddrPort {
 	)
 }
 
-func formatRequest(host string, port uint16, infoHashes [][sha1.Size]byte, cookie string) string {
-	request := "BT-SEARCH * HTTP/1.1\r\n"
-	request += fmt.Sprintf("Host: %s\r\n", host)
-	request += fmt.Sprintf("Port: %d\r\n", port)
-	for _, infoHash := range infoHashes {
-		request += fmt.Sprintf("Infohash: %s\r\n", hex.EncodeToString(infoHash[:]))
-	}
-	request += fmt.Sprintf("cookie: %s\r\n", cookie)
-	request += "\r\n"
-	request += "\r\n"
-
-	return request
-}
-
 // TODO: Accept multiple info hashes.
-func StartDiscovery(infoHash [sha1.Size]byte, errors chan<- error) {
+func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.PeerInfo, errors chan<- error) {
 	udpAddr := net.UDPAddrFromAddrPort(multicastAddressIpv4())
 
-	go listenAnnouncements(*udpAddr, errors)
+	go listenAnnouncements(*udpAddr, discoveredPeers, errors)
 
 	infoHashes := [1][sha1.Size]byte{infoHash}
-	request := formatRequest(udpAddr.String(), global_params.ConnectionListenPort, infoHashes[:], "")
+	message := btSearchMessage{
+		host:       udpAddr.String(),
+		port:       global_params.ConnectionListenPort,
+		infoHashes: infoHashes[:],
+		cookie:     "",
+	}
+	request := formatMessage(message)
 
 	conn, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {
@@ -70,7 +65,7 @@ func StartDiscovery(infoHash [sha1.Size]byte, errors chan<- error) {
 }
 
 // TODO: Listen on all interfaces participating in file exchange.
-func listenAnnouncements(address net.UDPAddr, errors chan<- error) {
+func listenAnnouncements(address net.UDPAddr, discoveredPeers chan<- tracker.PeerInfo, errors chan<- error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		errors <- fmt.Errorf("failed to get network interfaces: %w", err)
@@ -113,9 +108,63 @@ func listenAnnouncements(address net.UDPAddr, errors chan<- error) {
 			return
 		}
 
-		// TODO: Parse message.
+		message, err := parseMessage(string(buffer[:messageLen]))
+		if err != nil {
+			fmt.Printf("failed to read btsearch response: %v", err)
+			continue
+		}
 
-		log.Printf("SOURCE ADDRESS: %v", source)
-		log.Printf("MESSAGE: %s", string(buffer[:messageLen]))
+		// TODO: Validate message.
+
+		sourceAddress := source.String()
+		sourceAddrPort, err := netip.ParseAddrPort(sourceAddress)
+		if err != nil {
+			log.Panicf("unable to parse address and port: %v", err)
+		}
+		sourceIP := sourceAddrPort.Addr().As4()
+
+		discoveredPeers <- tracker.PeerInfo{IP: sourceIP[:], Port: message.port}
 	}
+}
+
+type btSearchMessage struct {
+	host       string
+	port       uint16
+	infoHashes [][sha1.Size]byte
+	cookie     string
+}
+
+func formatMessage(message btSearchMessage) string {
+	messageString := "BT-SEARCH * HTTP/1.1\r\n"
+	messageString += fmt.Sprintf("Host: %s\r\n", message.host)
+	messageString += fmt.Sprintf("Port: %d\r\n", message.port)
+	for _, infoHash := range message.infoHashes {
+		messageString += fmt.Sprintf("Infohash: %s\r\n", hex.EncodeToString(infoHash[:]))
+	}
+	messageString += fmt.Sprintf("cookie: %s\r\n", message.cookie)
+	messageString += "\r\n"
+	messageString += "\r\n"
+
+	return messageString
+}
+
+func parseMessage(messageString string) (btSearchMessage, error) {
+	message := btSearchMessage{}
+
+	lines := strings.Split(messageString, "\r\n")
+	for _, line := range lines {
+		switch {
+		case strings.Contains(line, "Port"):
+			line = line[len("Port: "):]
+			port, err := strconv.ParseUint(line, 10, 16)
+			if err != nil {
+				return message, fmt.Errorf("failed to parse port: %w", err)
+			}
+
+			message.port = uint16(port)
+		}
+		// TODO: Parse other headers.
+	}
+
+	return message, nil
 }

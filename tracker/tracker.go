@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mertwole/bittorrent-cli/bencode"
+	"github.com/mertwole/bittorrent-cli/global_params"
 )
 
 const maxAnnounceResponseLength = 1024
@@ -112,7 +113,7 @@ func sendHTTPRequest(
 	address *url.URL,
 	announceRequest *announceRequest,
 ) (*TrackerResponse, error) {
-	Port := 6881
+	Port := global_params.ConnectionListenPort
 
 	address.RawQuery = url.Values{
 		"info_hash":  []string{string(announceRequest.infoHash[:])},
@@ -265,7 +266,7 @@ func sendUDPAnnounceRequest(
 	announceRequest *announceRequest,
 	urlData string,
 ) (*TrackerResponse, error) {
-	var port uint16 = 6881
+	port := uint16(global_params.ConnectionListenPort)
 	var key uint32 = 0xAABBCCDD
 
 	// Offset  Size    			Name    		Value

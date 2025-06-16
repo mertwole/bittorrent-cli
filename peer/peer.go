@@ -44,21 +44,25 @@ func (peer *Peer) GetInfo() tracker.PeerInfo {
 	return peer.info
 }
 
-func (peer *Peer) Connect(info *tracker.PeerInfo) error {
+func (peer *Peer) Connect(info *tracker.PeerInfo, existingConnection *net.Conn) error {
 	peer.info = *info
 	peer.chocked = true
 	peer.availableExtensions = extensions.Empty()
 
-	conn, err := net.DialTimeout(
-		"tcp",
-		info.IP.String()+":"+strconv.Itoa(int(info.Port)),
-		constants.ConnectionTimeout,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to establish connection with peer %s: %w", info.IP.String(), err)
-	}
+	if existingConnection == nil {
+		conn, err := net.DialTimeout(
+			"tcp",
+			info.IP.String()+":"+strconv.Itoa(int(info.Port)),
+			constants.ConnectionTimeout,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to establish connection with peer %s: %w", info.IP.String(), err)
+		}
 
-	peer.connection = conn
+		peer.connection = conn
+	} else {
+		peer.connection = *existingConnection
+	}
 
 	return nil
 }

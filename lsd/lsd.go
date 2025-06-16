@@ -14,16 +14,18 @@ import (
 
 const announceInterval = time.Second * 1
 const readMessageBufferSize = 2048
+const listeningOnPort = 6969
+const multicastPort = 6771
 
 func multicastAddressIpv4() netip.AddrPort {
-	return netip.AddrPortFrom(netip.AddrFrom4([4]byte{239, 192, 152, 143}), 6771)
+	return netip.AddrPortFrom(netip.AddrFrom4([4]byte{239, 192, 152, 143}), multicastPort)
 }
 
 // TODO: Use.
 func multicastAddressIpv6() netip.AddrPort {
 	return netip.AddrPortFrom(netip.AddrFrom16(
 		[16]byte{0xFF, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xEF, 0xC0, 0x98, 0x8F}),
-		6771,
+		multicastPort,
 	)
 }
 
@@ -48,7 +50,7 @@ func StartDiscovery(infoHash [sha1.Size]byte, errors chan<- error) {
 	go listenAnnouncements(*udpAddr, errors)
 
 	infoHashes := [1][sha1.Size]byte{infoHash}
-	request := formatRequest(udpAddr.String(), 6969, infoHashes[:], "")
+	request := formatRequest(udpAddr.String(), listeningOnPort, infoHashes[:], "")
 
 	conn, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {
@@ -82,8 +84,7 @@ func listenAnnouncements(address net.UDPAddr, errors chan<- error) {
 	// TODO: Choose correct interface.
 	activeInterface := interfaces[1]
 
-	// TODO: Move to const.
-	conn, err := net.ListenPacket("udp", "0.0.0.0:6771")
+	conn, err := net.ListenPacket("udp", fmt.Sprintf(":%d", multicastPort))
 	if err != nil {
 		errors <- fmt.Errorf("failed to create UDP connection: %w", err)
 		return
@@ -111,6 +112,8 @@ func listenAnnouncements(address net.UDPAddr, errors chan<- error) {
 			errors <- fmt.Errorf("failed to read UDP message: %w", err)
 			return
 		}
+
+		// TODO: Parse message.
 
 		log.Printf("SOURCE ADDRESS: %v", source)
 		log.Printf("MESSAGE: %s", string(buffer[:messageLen]))

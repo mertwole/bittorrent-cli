@@ -114,6 +114,10 @@ func listenAnnouncements(address net.UDPAddr, discoveredPeers chan<- tracker.Pee
 			continue
 		}
 
+		if packetConn.LocalAddr() == source {
+			continue
+		}
+
 		// TODO: Validate message.
 
 		sourceAddress := source.String()

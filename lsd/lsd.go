@@ -39,7 +39,7 @@ func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.Pee
 	udpAddr := net.UDPAddrFromAddrPort(multicastAddressIpv4())
 
 	cookie := strconv.FormatInt(rand.Int64(), 36)
-	go listenAnnouncements(*udpAddr, discoveredPeers, cookie, errors)
+	go listenAnnouncements(*udpAddr, infoHash, discoveredPeers, cookie, errors)
 
 	infoHashes := [1][sha1.Size]byte{infoHash}
 	message := btSearchMessage{
@@ -70,6 +70,7 @@ func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.Pee
 // TODO: Listen on all interfaces participating in file exchange.
 func listenAnnouncements(
 	address net.UDPAddr,
+	requiredInfoHash [sha1.Size]byte,
 	discoveredPeers chan<- tracker.PeerInfo,
 	cookie string,
 	errors chan<- error,
@@ -126,6 +127,18 @@ func listenAnnouncements(
 			continue
 		}
 
+		infoHashFound := false
+		for _, infoHash := range message.infoHashes {
+			if infoHash == requiredInfoHash {
+				infoHashFound = true
+				break
+			}
+		}
+
+		if !infoHashFound {
+			continue
+		}
+
 		// TODO: Validate message.
 
 		sourceAddress := source.String()
@@ -147,8 +160,9 @@ type btSearchMessage struct {
 }
 
 const (
-	portHeader   = "Port: "
-	cookieHeader = "cookie: "
+	portHeader     = "Port: "
+	cookieHeader   = "cookie: "
+	infohashHeader = "Infohash: "
 )
 
 func formatMessage(message btSearchMessage) string {
@@ -156,7 +170,7 @@ func formatMessage(message btSearchMessage) string {
 	messageString += fmt.Sprintf("Host: %s\r\n", message.host)
 	messageString += fmt.Sprintf("%s%d\r\n", portHeader, message.port)
 	for _, infoHash := range message.infoHashes {
-		messageString += fmt.Sprintf("Infohash: %s\r\n", hex.EncodeToString(infoHash[:]))
+		messageString += fmt.Sprintf("%s%s\r\n", infohashHeader, hex.EncodeToString(infoHash[:]))
 	}
 	messageString += fmt.Sprintf("%s%s\r\n", cookieHeader, message.cookie)
 	messageString += "\r\n"
@@ -167,6 +181,7 @@ func formatMessage(message btSearchMessage) string {
 
 func parseMessage(messageString string) (btSearchMessage, error) {
 	message := btSearchMessage{}
+	message.infoHashes = make([][sha1.Size]byte, 0)
 
 	lines := strings.Split(messageString, "\r\n")
 
@@ -180,6 +195,20 @@ func parseMessage(messageString string) (btSearchMessage, error) {
 			message.port = uint16(port)
 		} else if remaining, ok = trimPrefix(line, cookieHeader); ok {
 			message.cookie = remaining
+		} else if remaining, ok = trimPrefix(line, infohashHeader); ok {
+			infoHash, err := hex.DecodeString(remaining)
+			if err != nil {
+				return message, fmt.Errorf("failed to decode infohash: %w", err)
+			}
+			if len(infoHash) != sha1.Size {
+				return message, fmt.Errorf(
+					"received infohash of invalid length: expected %d, got %d",
+					sha1.Size,
+					len(infoHash),
+				)
+			}
+
+			message.infoHashes = append(message.infoHashes, [20]byte(infoHash))
 		}
 		// TODO: Parse other headers.
 	}

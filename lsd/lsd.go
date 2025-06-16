@@ -57,13 +57,13 @@ func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.Pee
 	}
 
 	for {
+		time.Sleep(announceInterval)
+
 		_, err = conn.Write([]byte(request))
 		if err != nil {
 			errors <- fmt.Errorf("failed to send request: %w", err)
 			return
 		}
-
-		time.Sleep(announceInterval)
 	}
 }
 

@@ -61,10 +61,21 @@ func (download *Download) Start() {
 		go tracker.ListenForPeers(discoveredPeers)
 	}
 
-	// TODO: Process errors.
 	lsdErrors := make(chan error)
 	go lsd.StartDiscovery(download.torrentInfo.InfoHash, lsdErrors)
 
+	go download.downloadFromDiscoveredPeers(discoveredPeers)
+
+	// TODO: Process errors.
+	err = <-lsdErrors
+	log.Panicf("error in lsd: %v", err)
+}
+
+func (download *Download) GetTorrentName() string {
+	return download.torrentInfo.Name
+}
+
+func (download *Download) downloadFromDiscoveredPeers(discoveredPeers <-chan tracker.PeerInfo) {
 	knownPeers := make([]tracker.PeerInfo, 0)
 	for {
 		newPeer := <-discoveredPeers
@@ -81,10 +92,6 @@ func (download *Download) Start() {
 			go download.downloadFromPeer(&newPeer)
 		}
 	}
-}
-
-func (download *Download) GetTorrentName() string {
-	return download.torrentInfo.Name
 }
 
 func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo) {

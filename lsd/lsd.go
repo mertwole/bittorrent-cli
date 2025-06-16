@@ -4,12 +4,16 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net"
 	"net/netip"
 	"time"
+
+	"golang.org/x/net/ipv4"
 )
 
-const announceInterval = time.Second * 60
+const announceInterval = time.Second * 1
+const readMessageBufferSize = 2048
 
 func multicastAddressIpv4() netip.AddrPort {
 	return netip.AddrPortFrom(netip.AddrFrom4([4]byte{239, 192, 152, 143}), 6771)
@@ -75,18 +79,40 @@ func listenAnnouncements(address net.UDPAddr, errors chan<- error) {
 		return
 	}
 
-	conn, err := net.ListenMulticastUDP("udp", &interfaces[0], &address)
+	// TODO: Choose correct interface.
+	activeInterface := interfaces[1]
+
+	// TODO: Move to const.
+	conn, err := net.ListenPacket("udp", "0.0.0.0:6771")
 	if err != nil {
-		errors <- fmt.Errorf("failed to listen multicast address: %w", err)
+		errors <- fmt.Errorf("failed to create UDP connection: %w", err)
+		return
+	}
+
+	packetConn := ipv4.NewPacketConn(conn)
+
+	err = packetConn.JoinGroup(&activeInterface, &address)
+	if err != nil {
+		errors <- fmt.Errorf("failed to join multicast group: %w", err)
+		return
+	}
+
+	err = packetConn.SetControlMessage(ipv4.FlagDst, true)
+	if err != nil {
+		errors <- fmt.Errorf("failed to set control message: %w", err)
 		return
 	}
 
 	for {
-		buffer := make([]byte, 1024)
-		_, err := conn.Read(buffer)
+		buffer := make([]byte, readMessageBufferSize)
+		messageLen, _, source, err := packetConn.ReadFrom(buffer)
+
 		if err != nil {
-			errors <- fmt.Errorf("failed to read from UDP socket: %w", err)
+			errors <- fmt.Errorf("failed to read UDP message: %w", err)
 			return
 		}
+
+		log.Printf("SOURCE ADDRESS: %v", source)
+		log.Printf("MESSAGE: %s", string(buffer[:messageLen]))
 	}
 }

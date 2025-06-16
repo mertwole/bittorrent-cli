@@ -1,0 +1,43 @@
+services:
+  seed:
+    build: 
+      context: ../
+      dockerfile: ./Dockerfile
+    command: --interactive=false --torrent=/torrent/torrent.torrent --download=/torrent
+    volumes:
+      - ./torrent:/torrent
+    networks:
+      swarm:
+        ipv4_address: 10.5.0.100
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "32m"
+
+  leech:
+    build:
+      context: ../
+      dockerfile: ./Dockerfile
+    command: --interactive=false --torrent=/torrent/torrent.torrent --download=/tmp
+    volumes:
+      - ./torrent:/torrent
+    tmpfs:
+      - /tmp
+    networks:
+      swarm:
+        ipv4_address: 10.5.0.200
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "32m"
+
+networks:
+  swarm:
+    driver: ipvlan
+    driver_opts:
+      parent: eth0
+      ipvlan_mode: l3
+    ipam:
+     config:
+       - subnet: 10.5.0.0/16
+         gateway: 10.5.0.1

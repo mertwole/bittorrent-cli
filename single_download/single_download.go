@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/mertwole/bittorrent-cli/download"
+	"github.com/mertwole/bittorrent-cli/global_params"
 	"github.com/mertwole/bittorrent-cli/lsd"
 	"github.com/mertwole/bittorrent-cli/peer"
 	"github.com/mertwole/bittorrent-cli/pieces"
@@ -17,7 +18,6 @@ import (
 
 const discoveredPeersQueueSize = 16
 const connectedPeersQueueSize = 16
-const listenPort = 6881
 
 type Download struct {
 	Pieces           *pieces.Pieces
@@ -149,7 +149,7 @@ type connectedPeer struct {
 }
 
 func (download *Download) acceptConnectionRequests(connectedPeers chan<- connectedPeer) {
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", listenPort))
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", global_params.ConnectionListenPort))
 	if err != nil {
 		log.Fatalf("failed to create TCP listener")
 	}

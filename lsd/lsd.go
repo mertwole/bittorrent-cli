@@ -9,12 +9,12 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/mertwole/bittorrent-cli/global_params"
 	"golang.org/x/net/ipv4"
 )
 
 const announceInterval = time.Second * 1
 const readMessageBufferSize = 2048
-const listeningOnPort = 6881
 const multicastPort = 6771
 
 func multicastAddressIpv4() netip.AddrPort {
@@ -50,7 +50,7 @@ func StartDiscovery(infoHash [sha1.Size]byte, errors chan<- error) {
 	go listenAnnouncements(*udpAddr, errors)
 
 	infoHashes := [1][sha1.Size]byte{infoHash}
-	request := formatRequest(udpAddr.String(), listeningOnPort, infoHashes[:], "")
+	request := formatRequest(udpAddr.String(), global_params.ConnectionListenPort, infoHashes[:], "")
 
 	conn, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {

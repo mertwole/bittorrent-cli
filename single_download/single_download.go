@@ -3,6 +3,8 @@ package single_download
 import (
 	"fmt"
 	"log"
+	"net"
+	"net/netip"
 	"os"
 
 	"github.com/mertwole/bittorrent-cli/download"
@@ -14,6 +16,8 @@ import (
 )
 
 const discoveredPeersQueueSize = 16
+const connectedPeersQueueSize = 16
+const listenPort = 6881
 
 type Download struct {
 	Pieces           *pieces.Pieces
@@ -64,7 +68,10 @@ func (download *Download) Start() {
 	lsdErrors := make(chan error)
 	go lsd.StartDiscovery(download.torrentInfo.InfoHash, lsdErrors)
 
-	go download.downloadFromDiscoveredPeers(discoveredPeers)
+	connectedPeers := make(chan connectedPeer, connectedPeersQueueSize)
+	go download.acceptConnectionRequests(connectedPeers)
+
+	go download.downloadFromAllPeers(discoveredPeers, connectedPeers)
 
 	// TODO: Process errors.
 	err = <-lsdErrors
@@ -75,29 +82,47 @@ func (download *Download) GetTorrentName() string {
 	return download.torrentInfo.Name
 }
 
-func (download *Download) downloadFromDiscoveredPeers(discoveredPeers <-chan tracker.PeerInfo) {
+func (download *Download) downloadFromAllPeers(
+	discoveredPeers <-chan tracker.PeerInfo,
+	connectedPeers <-chan connectedPeer,
+) {
 	knownPeers := make([]tracker.PeerInfo, 0)
 	for {
-		newPeer := <-discoveredPeers
-		alreadyKnown := false
-		for _, peer := range knownPeers {
-			if peer.IP.Equal(newPeer.IP) {
-				alreadyKnown = true
-				break
+		select {
+		case newPeer := <-discoveredPeers:
+			alreadyKnown := false
+			for _, peer := range knownPeers {
+				if peer.IP.Equal(newPeer.IP) {
+					alreadyKnown = true
+					break
+				}
 			}
-		}
 
-		if !alreadyKnown {
-			knownPeers = append(knownPeers, newPeer)
-			go download.downloadFromPeer(&newPeer)
+			if !alreadyKnown {
+				knownPeers = append(knownPeers, newPeer)
+				go download.downloadFromPeer(&newPeer, nil)
+			}
+		case newPeer := <-connectedPeers:
+			alreadyKnown := false
+			for _, peer := range knownPeers {
+				if peer.IP.Equal(newPeer.info.IP) {
+					alreadyKnown = true
+					break
+				}
+			}
+
+			if !alreadyKnown {
+				knownPeers = append(knownPeers, newPeer.info)
+				go download.downloadFromPeer(&newPeer.info, newPeer.connection)
+			}
 		}
 	}
 }
 
-func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo) {
+func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo, connection *net.Conn) {
 	for {
 		peer := peer.Peer{}
-		err := peer.Connect(peerInfo)
+		err := peer.Connect(peerInfo, connection)
 		if err != nil {
 			log.Printf("failed to connect to the peer: %v", err)
 			return
@@ -115,5 +140,36 @@ func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo) {
 		if err != nil {
 			log.Printf("failed to download data from peer: %v. reconnecting", err)
 		}
+	}
+}
+
+type connectedPeer struct {
+	info       tracker.PeerInfo
+	connection *net.Conn
+}
+
+func (download *Download) acceptConnectionRequests(connectedPeers chan<- connectedPeer) {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", listenPort))
+	if err != nil {
+		log.Fatalf("failed to create TCP listener")
+	}
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("failed to accept TCP connection: %v", err)
+			continue
+		}
+
+		remoteAddress := conn.RemoteAddr().String()
+		remoteAddrPort, err := netip.ParseAddrPort(remoteAddress)
+		if err != nil {
+			log.Panicf("unable to parse address and port: %v", err)
+		}
+		remoteIP := remoteAddrPort.Addr().As4()
+
+		peerInfo := tracker.PeerInfo{IP: remoteIP[:], Port: remoteAddrPort.Port()}
+
+		connectedPeers <- connectedPeer{info: peerInfo, connection: &conn}
 	}
 }

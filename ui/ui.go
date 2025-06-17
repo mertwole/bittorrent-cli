@@ -16,9 +16,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/mertwole/bittorrent-cli/bitfield"
-	"github.com/mertwole/bittorrent-cli/download"
 	"github.com/mertwole/bittorrent-cli/single_download"
+	"github.com/mertwole/bittorrent-cli/single_download/bitfield"
+	"github.com/mertwole/bittorrent-cli/single_download/download"
 )
 
 const torrentFileExtension = ".torrent"

@@ -4,7 +4,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/mertwole/bittorrent-cli/peer/extensions"
+	"github.com/mertwole/bittorrent-cli/single_download/peer/extensions"
 )
 
 const ConnectionTimeout = time.Second * 120

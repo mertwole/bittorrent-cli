@@ -10,16 +10,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mertwole/bittorrent-cli/bitfield"
-	"github.com/mertwole/bittorrent-cli/download"
-	"github.com/mertwole/bittorrent-cli/peer/constants"
-	"github.com/mertwole/bittorrent-cli/peer/extensions"
-	"github.com/mertwole/bittorrent-cli/peer/message"
-	"github.com/mertwole/bittorrent-cli/peer/pending_pieces"
-	"github.com/mertwole/bittorrent-cli/peer/requested_pieces"
-	"github.com/mertwole/bittorrent-cli/pieces"
-	"github.com/mertwole/bittorrent-cli/torrent_info"
-	"github.com/mertwole/bittorrent-cli/tracker"
+	"github.com/mertwole/bittorrent-cli/single_download/bitfield"
+	"github.com/mertwole/bittorrent-cli/single_download/download"
+	"github.com/mertwole/bittorrent-cli/single_download/peer/constants"
+	"github.com/mertwole/bittorrent-cli/single_download/peer/extensions"
+	"github.com/mertwole/bittorrent-cli/single_download/peer/message"
+	"github.com/mertwole/bittorrent-cli/single_download/peer/pending_pieces"
+	"github.com/mertwole/bittorrent-cli/single_download/peer/requested_pieces"
+	"github.com/mertwole/bittorrent-cli/single_download/pieces"
+	"github.com/mertwole/bittorrent-cli/single_download/torrent_info"
+	"github.com/mertwole/bittorrent-cli/single_download/tracker"
 )
 
 type Peer struct {

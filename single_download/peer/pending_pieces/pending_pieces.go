@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mertwole/bittorrent-cli/peer/constants"
+	"github.com/mertwole/bittorrent-cli/single_download/peer/constants"
 )
 
 type PendingPieces struct {

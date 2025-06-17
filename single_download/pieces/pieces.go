@@ -3,7 +3,7 @@ package pieces
 import (
 	"sync"
 
-	"github.com/mertwole/bittorrent-cli/bitfield"
+	"github.com/mertwole/bittorrent-cli/single_download/bitfield"
 )
 
 type Pieces struct {

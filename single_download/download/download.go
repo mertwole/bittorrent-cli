@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/mertwole/bittorrent-cli/pieces"
-	"github.com/mertwole/bittorrent-cli/torrent_info"
+	"github.com/mertwole/bittorrent-cli/single_download/pieces"
+	"github.com/mertwole/bittorrent-cli/single_download/torrent_info"
 )
 
 type DownloadedPiece struct {

@@ -3,8 +3,8 @@ package bencode
 import (
 	"io"
 
-	"github.com/mertwole/bittorrent-cli/bencode/deserialize"
-	"github.com/mertwole/bittorrent-cli/bencode/serialize"
+	"github.com/mertwole/bittorrent-cli/single_download/bencode/deserialize"
+	"github.com/mertwole/bittorrent-cli/single_download/bencode/serialize"
 )
 
 func Deserialize(reader io.Reader, value any) error {

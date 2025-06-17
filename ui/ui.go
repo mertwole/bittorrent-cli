@@ -42,7 +42,6 @@ func StartUI() {
 
 	filePicker := filepicker.New()
 	filePicker.AllowedTypes = []string{torrentFileExtension}
-	filePicker.CurrentDirectory, _ = os.UserHomeDir()
 	filePicker.AutoHeight = true
 
 	mainScreen := tea.NewProgram(mainScreen{

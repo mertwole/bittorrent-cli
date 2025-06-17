@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"slices"
 
-	"github.com/mertwole/bittorrent-cli/bencode"
+	"github.com/mertwole/bittorrent-cli/download/bencode"
 )
 
 type TorrentInfo struct {

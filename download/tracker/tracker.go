@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mertwole/bittorrent-cli/bencode"
+	"github.com/mertwole/bittorrent-cli/download/bencode"
 	"github.com/mertwole/bittorrent-cli/global_params"
 )
 

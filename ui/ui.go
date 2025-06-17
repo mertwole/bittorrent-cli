@@ -16,9 +16,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/mertwole/bittorrent-cli/bitfield"
 	"github.com/mertwole/bittorrent-cli/download"
-	"github.com/mertwole/bittorrent-cli/single_download"
+	"github.com/mertwole/bittorrent-cli/download/bitfield"
+	"github.com/mertwole/bittorrent-cli/download/downloaded_files"
 )
 
 const torrentFileExtension = ".torrent"
@@ -141,7 +141,7 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		screen.additionRequest = false
 
 		// TODO: Determine download path.
-		newDownload, err := single_download.New(filePath, "./data")
+		newDownload, err := download.New(filePath, "./data")
 		if err != nil {
 			// TODO: Show this error to the user.
 			log.Panicf("failed to add file to downloads: %v", err)
@@ -176,7 +176,7 @@ func (screen mainScreen) View() string {
 }
 
 type downloadItem struct {
-	model            *single_download.Download
+	model            *download.Download
 	downloadedPieces *bitfield.ConcurrentBitfield
 }
 
@@ -226,15 +226,15 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 	downloadStatus := model.DownloadedPieces.GetStatus()
 	switch downloadStatus.State {
-	case download.PreparingFiles:
+	case downloaded_files.PreparingFiles:
 		downloadProgressLabel = "preparing files"
-	case download.CheckingHashes:
+	case downloaded_files.CheckingHashes:
 		downloadProgressLabel = "checking files"
 
 		progressBar = progress.
 			New(progress.WithWidth(progressBarWidth), progress.WithSolidFill("#66F27D")).
 			ViewAs(float64(downloadStatus.Progress) / float64(downloadStatus.Total))
-	case download.Ready:
+	case downloaded_files.Ready:
 		downloadProgressLabel = "downloading"
 
 		downloadPercent := float64(downloadedPieces) / float64(totalPieces) * 100.

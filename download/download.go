@@ -1,250 +1,182 @@
 package download
 
 import (
-	"crypto/sha1"
 	"fmt"
+	"log"
+	"net"
+	"net/netip"
 	"os"
-	"path/filepath"
-	"sync"
+	"time"
 
-	"github.com/mertwole/bittorrent-cli/pieces"
-	"github.com/mertwole/bittorrent-cli/torrent_info"
+	"github.com/mertwole/bittorrent-cli/download/downloaded_files"
+	"github.com/mertwole/bittorrent-cli/download/lsd"
+	"github.com/mertwole/bittorrent-cli/download/peer"
+	"github.com/mertwole/bittorrent-cli/download/pieces"
+	"github.com/mertwole/bittorrent-cli/download/torrent_info"
+	"github.com/mertwole/bittorrent-cli/download/tracker"
+	"github.com/mertwole/bittorrent-cli/global_params"
 )
 
-type DownloadedPiece struct {
-	Offset int
-	Data   []byte
-}
+const discoveredPeersQueueSize = 16
+const connectedPeersQueueSize = 16
 
 type Download struct {
-	files       []downloadedFile
-	pieceLength int
-	pieceHashes [][sha1.Size]byte
-	status      Status
-	mutex       sync.RWMutex
+	Pieces           *pieces.Pieces
+	DownloadedPieces *downloaded_files.DownloadedFiles
+	torrentInfo      *torrent_info.TorrentInfo
 }
 
-type downloadedFile struct {
-	path   string
-	length int
-	handle *os.File
-}
-
-type Status struct {
-	State    State
-	Progress int
-	Total    int
-	mutex    sync.RWMutex
-}
-
-type State uint8
-
-const (
-	PreparingFiles State = 0
-	CheckingHashes State = 1
-	Ready          State = 2
-)
-
-func NewDownload(
-	torrent *torrent_info.TorrentInfo,
-	targetFolder string,
-) *Download {
-	downloadedFiles := Download{
-		pieceLength: torrent.PieceLength,
-		pieceHashes: torrent.Pieces,
-		status:      Status{State: PreparingFiles, Progress: 0, Total: 0},
+func New(fileName string, downloadFolderName string) (*Download, error) {
+	torrentFile, err := os.Open(fileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open torrent file: %w", err)
 	}
 
-	if len(torrent.Files) == 0 {
-		path := filepath.Join(targetFolder, torrent.Name)
-		downloadedFiles.files = []downloadedFile{{path: path, length: torrent.TotalLength}}
-
-		return &downloadedFiles
+	torrentInfo, err := torrent_info.Decode(torrentFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode torrent file: %w", err)
 	}
 
-	downloadFolderPath := filepath.Join(targetFolder, torrent.Name)
-	downloadedFiles.files = make([]downloadedFile, len(torrent.Files))
-	for i, fileInfo := range torrent.Files {
-		relativePath := filepath.Join(fileInfo.Path...)
-		path := filepath.Join(downloadFolderPath, relativePath)
+	pieces := pieces.New(len(torrentInfo.Pieces))
+	downloadedPieces := downloaded_files.New(torrentInfo, downloadFolderName)
 
-		downloadedFiles.files[i] = downloadedFile{path: path, length: fileInfo.Length}
-	}
-
-	return &downloadedFiles
+	return &Download{Pieces: pieces, DownloadedPieces: downloadedPieces, torrentInfo: torrentInfo}, nil
 }
 
-func (download *Download) Prepare(pieces *pieces.Pieces) error {
-	anyOpened := false
-	for i, file := range download.files {
-		fileHandle, fileAction, err := createOrOpenFile(file.path, file.length)
-		if err != nil {
-			return err
-		}
-
-		download.files[i].handle = fileHandle
-
-		if fileAction == opened {
-			anyOpened = true
-		}
+func (download *Download) Start() {
+	err := download.DownloadedPieces.Prepare(download.Pieces)
+	if err != nil {
+		log.Fatalf("failed to prepare download files: %v", err)
 	}
 
-	if anyOpened {
-		download.status.mutex.Lock()
-		download.status.State = CheckingHashes
-		download.status.Total = pieces.Length()
-		download.status.mutex.Unlock()
+	piecesBitfield := download.Pieces.GetBitfield()
+	downloadedCount := (&piecesBitfield).SetPiecesCount()
+	log.Printf("Discovered %d already downloaded pieces", downloadedCount)
 
-		err := download.scanDonePieces(pieces)
-		if err != nil {
-			return fmt.Errorf("failed to scan downloaded files for already downloaded pieces: %w", err)
-		}
+	peerID := [20]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+	discoveredPeers := make(chan tracker.PeerInfo, discoveredPeersQueueSize)
+
+	for _, trackerURL := range download.torrentInfo.Trackers {
+		tracker := tracker.NewTracker(trackerURL,
+			download.torrentInfo.InfoHash,
+			download.torrentInfo.TotalLength,
+			peerID,
+		)
+		go tracker.ListenForPeers(discoveredPeers)
 	}
 
-	download.status.mutex.Lock()
-	download.status.State = Ready
-	download.status.mutex.Unlock()
+	lsdErrors := make(chan error)
+	go lsd.StartDiscovery(download.torrentInfo.InfoHash, discoveredPeers, lsdErrors)
 
-	return nil
-}
+	connectedPeers := make(chan connectedPeer, connectedPeersQueueSize)
+	go download.acceptConnectionRequests(connectedPeers)
 
-func (download *Download) GetStatus() Status {
-	download.status.mutex.RLock()
-	defer download.status.mutex.RUnlock()
+	go download.downloadFromAllPeers(discoveredPeers, connectedPeers)
 
-	return download.status
-}
+	// TODO: Process errors.
+	err = <-lsdErrors
+	log.Printf("error in lsd: %v", err)
 
-func (download *Download) ReadPiece(piece int) (*[]byte, error) {
-	offset := piece * download.pieceLength
-
-	currentOffset := 0
-	bytesRead := 0
-	readData := make([]byte, 0)
-
-	for _, file := range download.files {
-		if file.length+currentOffset > offset {
-			bytesToRead := min(download.pieceLength-bytesRead, file.length+currentOffset-offset, file.length)
-			readBytes := make([]byte, bytesToRead)
-
-			readOffset := int64(max(0, offset-currentOffset))
-
-			download.mutex.RLock()
-			_, err := file.handle.ReadAt(readBytes, readOffset)
-			download.mutex.RUnlock()
-
-			if err != nil {
-				return nil, fmt.Errorf("failed to read from file %s: %w", file.path, err)
-			}
-			readData = append(readData, readBytes...)
-
-			bytesRead += bytesToRead
-			if bytesRead >= download.pieceLength {
-				break
-			}
-		}
-
-		currentOffset += file.length
+	for {
+		time.Sleep(time.Millisecond * 100)
 	}
-
-	return &readData, nil
 }
 
-func (download *Download) WritePiece(piece DownloadedPiece) error {
-	currentOffset := 0
-	bytesWritten := 0
-	for _, file := range download.files {
-		if file.length+currentOffset > piece.Offset {
-			bytesToWrite := min(len(piece.Data)-bytesWritten, file.length+currentOffset-piece.Offset)
+func (download *Download) GetTorrentName() string {
+	return download.torrentInfo.Name
+}
 
-			writeOffset := int64(max(0, piece.Offset-currentOffset))
-
-			download.mutex.Lock()
-			_, err := file.handle.WriteAt((piece.Data)[bytesWritten:bytesWritten+bytesToWrite], writeOffset)
-			download.mutex.Unlock()
-
-			if err != nil {
-				return fmt.Errorf("failed to write to file %s: %w", file.path, err)
+func (download *Download) downloadFromAllPeers(
+	discoveredPeers <-chan tracker.PeerInfo,
+	connectedPeers <-chan connectedPeer,
+) {
+	knownPeers := make([]tracker.PeerInfo, 0)
+	for {
+		select {
+		case newPeer := <-discoveredPeers:
+			alreadyKnown := false
+			for _, peer := range knownPeers {
+				if peer.IP.Equal(newPeer.IP) {
+					alreadyKnown = true
+					break
+				}
 			}
 
-			bytesWritten += bytesToWrite
-			if bytesWritten >= len(piece.Data) {
-				break
+			if !alreadyKnown {
+				knownPeers = append(knownPeers, newPeer)
+				go download.downloadFromPeer(&newPeer, nil)
+			}
+		case newPeer := <-connectedPeers:
+			alreadyKnown := false
+			for _, peer := range knownPeers {
+				if peer.IP.Equal(newPeer.info.IP) {
+					alreadyKnown = true
+					break
+				}
+			}
+
+			if !alreadyKnown {
+				knownPeers = append(knownPeers, newPeer.info)
+				go download.downloadFromPeer(&newPeer.info, newPeer.connection)
 			}
 		}
-
-		currentOffset += file.length
-	}
-
-	return nil
-}
-
-func (download *Download) Finalize() {
-	for _, file := range download.files {
-		file.handle.Close()
 	}
 }
 
-type createOrOpenFileAction uint8
-
-const (
-	none    createOrOpenFileAction = 0
-	created createOrOpenFileAction = 1
-	opened  createOrOpenFileAction = 2
-)
-
-func createOrOpenFile(path string, expectedLength int) (*os.File, createOrOpenFileAction, error) {
-	var file *os.File
-
-	fileAction := opened
-
-	fileInfo, err := os.Stat(path)
-	if err == nil && fileInfo.Size() == int64(expectedLength) {
-		file, err = os.OpenFile(path, os.O_RDWR, 0644)
+func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo, connection *net.Conn) {
+	for {
+		peer := peer.Peer{}
+		err := peer.Connect(peerInfo, connection)
 		if err != nil {
-			return nil, none, fmt.Errorf("failed to open output file %s: %w", path, err)
+			log.Printf("failed to connect to the peer: %v", err)
+			return
+		}
+
+		err = peer.Handshake(download.torrentInfo)
+		if err != nil {
+			log.Printf("failed to handshake with the peer: %v", err)
+			return
+		}
+
+		log.Printf("handshaked with the peer %+v", peerInfo)
+
+		err = peer.StartExchange(download.torrentInfo, download.Pieces, download.DownloadedPieces)
+		if err != nil {
+			log.Printf("failed to download data from peer: %v. reconnecting", err)
 		}
 	}
-
-	if file == nil {
-		dir := filepath.Dir(path)
-		err = os.MkdirAll(dir, 0770)
-		if err != nil {
-			return nil, none, fmt.Errorf("failed to create output directory %s: %w", dir, err)
-		}
-
-		file, err = os.Create(path)
-		if err != nil {
-			return nil, none, fmt.Errorf("failed to create output file %s: %w", path, err)
-		}
-
-		err = file.Truncate(int64(expectedLength))
-		if err != nil {
-			return nil, none, fmt.Errorf("failed to truncate output file %s: %w", path, err)
-		}
-
-		fileAction = created
-	}
-
-	return file, fileAction, nil
 }
 
-func (download *Download) scanDonePieces(pcs *pieces.Pieces) error {
-	for i, pieceHash := range download.pieceHashes {
-		piece, err := download.ReadPiece(i)
-		if err != nil {
-			return fmt.Errorf("failed to read piece #%d: %w", i, err)
-		}
-		readPieceHash := sha1.Sum(*piece)
+type connectedPeer struct {
+	info       tracker.PeerInfo
+	connection *net.Conn
+}
 
-		if readPieceHash == pieceHash {
-			pcs.CheckStateAndChange(i, pieces.NotDownloaded, pieces.Downloaded)
-		}
-
-		download.status.mutex.Lock()
-		download.status.Progress++
-		download.status.mutex.Unlock()
+func (download *Download) acceptConnectionRequests(connectedPeers chan<- connectedPeer) {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", global_params.ConnectionListenPort))
+	if err != nil {
+		log.Fatalf("failed to create TCP listener")
 	}
 
-	return nil
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("failed to accept TCP connection: %v", err)
+			continue
+		}
+
+		remoteAddress := conn.RemoteAddr().String()
+		remoteAddrPort, err := netip.ParseAddrPort(remoteAddress)
+		if err != nil {
+			log.Panicf("unable to parse address and port: %v", err)
+		}
+		remoteIP := remoteAddrPort.Addr().As4()
+
+		peerInfo := tracker.PeerInfo{IP: remoteIP[:], Port: remoteAddrPort.Port()}
+
+		log.Printf("accepted TCP connection from %+v", peerInfo)
+
+		connectedPeers <- connectedPeer{info: peerInfo, connection: &conn}
+	}
 }

@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/mertwole/bittorrent-cli/single_download"
+	"github.com/mertwole/bittorrent-cli/download"
 	"github.com/mertwole/bittorrent-cli/ui"
 )
 
@@ -31,7 +31,7 @@ func main() {
 	if *interactiveMode {
 		ui.StartUI()
 	} else {
-		download, err := single_download.New(*torrentFileName, *downloadFolderName)
+		download, err := download.New(*torrentFileName, *downloadFolderName)
 		if err != nil {
 			log.Fatalf("failed to start download: %v", err)
 		}

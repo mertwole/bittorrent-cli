@@ -7,7 +7,7 @@ import (
 	"io"
 	"log"
 
-	"github.com/mertwole/bittorrent-cli/bencode"
+	"github.com/mertwole/bittorrent-cli/download/bencode"
 )
 
 const maxPayloadLength = 100_000_000

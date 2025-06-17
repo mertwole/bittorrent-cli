@@ -96,7 +96,7 @@ func listenAnnouncements(
 	discoveredPeers chan<- tracker.PeerInfo,
 	errors chan<- error,
 ) {
-	conn, err := net.ListenPacket("udp", fmt.Sprintf(":%d", multicastPort))
+	conn, err := net.ListenPacket("udp", address.String())
 	if err != nil {
 		errors <- fmt.Errorf("failed to create UDP connection: %w", err)
 		return

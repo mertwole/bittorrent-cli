@@ -1,4 +1,4 @@
-package download
+package downloaded_files
 
 import (
 	"crypto/sha1"
@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/mertwole/bittorrent-cli/single_download/pieces"
-	"github.com/mertwole/bittorrent-cli/single_download/torrent_info"
+	"github.com/mertwole/bittorrent-cli/download/pieces"
+	"github.com/mertwole/bittorrent-cli/download/torrent_info"
 )
 
 type DownloadedPiece struct {
@@ -16,7 +16,7 @@ type DownloadedPiece struct {
 	Data   []byte
 }
 
-type Download struct {
+type DownloadedFiles struct {
 	files       []downloadedFile
 	pieceLength int
 	pieceHashes [][sha1.Size]byte
@@ -45,11 +45,11 @@ const (
 	Ready          State = 2
 )
 
-func NewDownload(
+func New(
 	torrent *torrent_info.TorrentInfo,
 	targetFolder string,
-) *Download {
-	downloadedFiles := Download{
+) *DownloadedFiles {
+	downloadedFiles := DownloadedFiles{
 		pieceLength: torrent.PieceLength,
 		pieceHashes: torrent.Pieces,
 		status:      Status{State: PreparingFiles, Progress: 0, Total: 0},
@@ -74,7 +74,7 @@ func NewDownload(
 	return &downloadedFiles
 }
 
-func (download *Download) Prepare(pieces *pieces.Pieces) error {
+func (download *DownloadedFiles) Prepare(pieces *pieces.Pieces) error {
 	anyOpened := false
 	for i, file := range download.files {
 		fileHandle, fileAction, err := createOrOpenFile(file.path, file.length)
@@ -108,14 +108,14 @@ func (download *Download) Prepare(pieces *pieces.Pieces) error {
 	return nil
 }
 
-func (download *Download) GetStatus() Status {
+func (download *DownloadedFiles) GetStatus() Status {
 	download.status.mutex.RLock()
 	defer download.status.mutex.RUnlock()
 
 	return download.status
 }
 
-func (download *Download) ReadPiece(piece int) (*[]byte, error) {
+func (download *DownloadedFiles) ReadPiece(piece int) (*[]byte, error) {
 	offset := piece * download.pieceLength
 
 	currentOffset := 0
@@ -150,7 +150,7 @@ func (download *Download) ReadPiece(piece int) (*[]byte, error) {
 	return &readData, nil
 }
 
-func (download *Download) WritePiece(piece DownloadedPiece) error {
+func (download *DownloadedFiles) WritePiece(piece DownloadedPiece) error {
 	currentOffset := 0
 	bytesWritten := 0
 	for _, file := range download.files {
@@ -179,7 +179,7 @@ func (download *Download) WritePiece(piece DownloadedPiece) error {
 	return nil
 }
 
-func (download *Download) Finalize() {
+func (download *DownloadedFiles) Finalize() {
 	for _, file := range download.files {
 		file.handle.Close()
 	}
@@ -229,7 +229,7 @@ func createOrOpenFile(path string, expectedLength int) (*os.File, createOrOpenFi
 	return file, fileAction, nil
 }
 
-func (download *Download) scanDonePieces(pcs *pieces.Pieces) error {
+func (download *DownloadedFiles) scanDonePieces(pcs *pieces.Pieces) error {
 	for i, pieceHash := range download.pieceHashes {
 		piece, err := download.ReadPiece(i)
 		if err != nil {

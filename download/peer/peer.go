@@ -10,16 +10,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mertwole/bittorrent-cli/single_download/bitfield"
-	"github.com/mertwole/bittorrent-cli/single_download/download"
-	"github.com/mertwole/bittorrent-cli/single_download/peer/constants"
-	"github.com/mertwole/bittorrent-cli/single_download/peer/extensions"
-	"github.com/mertwole/bittorrent-cli/single_download/peer/message"
-	"github.com/mertwole/bittorrent-cli/single_download/peer/pending_pieces"
-	"github.com/mertwole/bittorrent-cli/single_download/peer/requested_pieces"
-	"github.com/mertwole/bittorrent-cli/single_download/pieces"
-	"github.com/mertwole/bittorrent-cli/single_download/torrent_info"
-	"github.com/mertwole/bittorrent-cli/single_download/tracker"
+	"github.com/mertwole/bittorrent-cli/download/bitfield"
+	"github.com/mertwole/bittorrent-cli/download/downloaded_files"
+	"github.com/mertwole/bittorrent-cli/download/peer/constants"
+	"github.com/mertwole/bittorrent-cli/download/peer/extensions"
+	"github.com/mertwole/bittorrent-cli/download/peer/message"
+	"github.com/mertwole/bittorrent-cli/download/peer/pending_pieces"
+	"github.com/mertwole/bittorrent-cli/download/peer/requested_pieces"
+	"github.com/mertwole/bittorrent-cli/download/pieces"
+	"github.com/mertwole/bittorrent-cli/download/torrent_info"
+	"github.com/mertwole/bittorrent-cli/download/tracker"
 )
 
 type Peer struct {
@@ -109,7 +109,7 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 func (peer *Peer) StartExchange(
 	torrent *torrent_info.TorrentInfo,
 	pieces *pieces.Pieces,
-	downloadedPieces *download.Download,
+	downloadedPieces *downloaded_files.DownloadedFiles,
 ) error {
 	// TODO: Cancel goroutines when error occured and cleanup the pendingPieces.
 
@@ -160,7 +160,7 @@ func (peer *Peer) StartExchange(
 
 func (peer *Peer) listen(
 	torrent *torrent_info.TorrentInfo,
-	downloadedPieces *download.Download,
+	downloadedPieces *downloaded_files.DownloadedFiles,
 	errors chan<- error,
 ) {
 	for {
@@ -218,7 +218,7 @@ func (peer *Peer) listen(
 				} else {
 					globalOffset := int(msg.Piece) * torrent.PieceLength
 					downloadedPieces.WritePiece(
-						download.DownloadedPiece{Offset: globalOffset, Data: donePiece.Data},
+						downloaded_files.DownloadedPiece{Offset: globalOffset, Data: donePiece.Data},
 					)
 
 					newState = pieces.Downloaded
@@ -375,7 +375,7 @@ func (peer *Peer) notifyPresentPieces(errors chan<- error) {
 	}
 }
 
-func (peer *Peer) uploadPieces(downloadedPieces *download.Download, errors chan<- error) {
+func (peer *Peer) uploadPieces(downloadedPieces *downloaded_files.DownloadedFiles, errors chan<- error) {
 	for {
 		requestedPiece := peer.requestedPieces.PopRequest()
 		if requestedPiece == nil {

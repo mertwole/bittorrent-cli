@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mertwole/bittorrent-cli/download/bencode"
 	"github.com/mertwole/bittorrent-cli/global_params"
-	"github.com/mertwole/bittorrent-cli/single_download/bencode"
 )
 
 const maxAnnounceResponseLength = 1024

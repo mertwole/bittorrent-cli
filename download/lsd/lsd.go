@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mertwole/bittorrent-cli/download/tracker"
 	"github.com/mertwole/bittorrent-cli/global_params"
-	"github.com/mertwole/bittorrent-cli/single_download/tracker"
 	"golang.org/x/net/ipv4"
 )
 

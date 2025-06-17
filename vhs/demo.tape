@@ -14,17 +14,18 @@ Type "?"
 Sleep 1s
 
 Type "+"
-Sleep 500ms
+Sleep 1s
 Enter
-Sleep 500ms
-Down
-Sleep 500ms
+Sleep 1s
 Enter
-Sleep 2s
+Sleep 4s
 
 Type "+"
-Sleep 500ms
+Sleep 1s
 Down
 Sleep 500ms
 Enter
+
+Sleep 5s
+Down
 Sleep 5s

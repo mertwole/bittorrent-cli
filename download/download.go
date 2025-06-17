@@ -156,7 +156,7 @@ type connectedPeer struct {
 func (download *Download) acceptConnectionRequests(connectedPeers chan<- connectedPeer) {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", global_params.ConnectionListenPort))
 	if err != nil {
-		log.Fatalf("failed to create TCP listener")
+		log.Fatalf("failed to create TCP listener: %v", err)
 	}
 
 	for {

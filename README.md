@@ -2,6 +2,8 @@
 
 Bittorrent-cli is a command-line interface Bittorrent client.
 
+![Demo](./vhs/demo.gif)
+
 ## Run
 
 Instal golang:

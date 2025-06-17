@@ -39,7 +39,24 @@ func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.Pee
 	udpAddr := net.UDPAddrFromAddrPort(multicastAddressIpv4())
 
 	cookie := strconv.FormatInt(rand.Int64(), 36)
-	go listenAnnouncements(*udpAddr, infoHash, discoveredPeers, cookie, errors)
+
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		errors <- fmt.Errorf("failed to get network interfaces: %w", err)
+		return
+	}
+	if len(interfaces) == 0 {
+		errors <- fmt.Errorf("no network interfaces found: %w", err)
+		return
+	}
+
+	for _, listenInterface := range interfaces {
+		if listenInterface.Flags&net.FlagMulticast == 0 {
+			continue
+		}
+
+		go listenAnnouncements(*udpAddr, infoHash, cookie, listenInterface, discoveredPeers, errors)
+	}
 
 	infoHashes := [1][sha1.Size]byte{infoHash}
 	message := btSearchMessage{
@@ -67,27 +84,14 @@ func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.Pee
 	}
 }
 
-// TODO: Listen on all interfaces participating in file exchange.
 func listenAnnouncements(
 	address net.UDPAddr,
 	requiredInfoHash [sha1.Size]byte,
-	discoveredPeers chan<- tracker.PeerInfo,
 	cookie string,
+	listenInterface net.Interface,
+	discoveredPeers chan<- tracker.PeerInfo,
 	errors chan<- error,
 ) {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		errors <- fmt.Errorf("failed to get network interfaces: %w", err)
-		return
-	}
-	if len(interfaces) == 0 {
-		errors <- fmt.Errorf("no network interfaces found: %w", err)
-		return
-	}
-
-	// TODO: Choose correct interface.
-	activeInterface := interfaces[1]
-
 	conn, err := net.ListenPacket("udp", fmt.Sprintf(":%d", multicastPort))
 	if err != nil {
 		errors <- fmt.Errorf("failed to create UDP connection: %w", err)
@@ -96,7 +100,7 @@ func listenAnnouncements(
 
 	packetConn := ipv4.NewPacketConn(conn)
 
-	err = packetConn.JoinGroup(&activeInterface, &address)
+	err = packetConn.JoinGroup(&listenInterface, &address)
 	if err != nil {
 		errors <- fmt.Errorf("failed to join multicast group: %w", err)
 		return
@@ -184,9 +188,9 @@ func parseMessage(messageString string) (btSearchMessage, error) {
 	message := btSearchMessage{}
 	message.infoHashes = make([][sha1.Size]byte, 0)
 
-	lines := strings.Split(messageString, "\r\n")
+	lines := strings.SplitSeq(messageString, "\r\n")
 
-	for _, line := range lines {
+	for line := range lines {
 		if remaining, ok := trimPrefix(line, portHeader); ok {
 			port, err := strconv.ParseUint(remaining, 10, 16)
 			if err != nil {

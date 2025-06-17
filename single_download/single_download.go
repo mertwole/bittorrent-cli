@@ -66,7 +66,7 @@ func (download *Download) Start() {
 	}
 
 	lsdErrors := make(chan error)
-	go lsd.StartDiscovery(download.torrentInfo.InfoHash, lsdErrors)
+	go lsd.StartDiscovery(download.torrentInfo.InfoHash, discoveredPeers, lsdErrors)
 
 	connectedPeers := make(chan connectedPeer, connectedPeersQueueSize)
 	go download.acceptConnectionRequests(connectedPeers)

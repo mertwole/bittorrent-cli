@@ -45,17 +45,20 @@ func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.Pee
 		errors <- fmt.Errorf("failed to get network interfaces: %w", err)
 		return
 	}
-	if len(interfaces) == 0 {
-		errors <- fmt.Errorf("no network interfaces found: %w", err)
-		return
-	}
 
+	listeningOnAny := false
 	for _, listenInterface := range interfaces {
 		if listenInterface.Flags&net.FlagMulticast == 0 {
 			continue
 		}
 
+		listeningOnAny = true
 		go listenAnnouncements(*udpAddr, infoHash, cookie, listenInterface, discoveredPeers, errors)
+	}
+
+	if !listeningOnAny {
+		log.Printf("no interfaces supporting multicast are found. cannot start LSD")
+		return
 	}
 
 	infoHashes := [1][sha1.Size]byte{infoHash}
@@ -67,6 +70,7 @@ func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.Pee
 	}
 	request := formatMessage(message)
 
+	// TODO: Announce on all interfaces?
 	conn, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {
 		errors <- fmt.Errorf("UDP dial failed: %w", err)

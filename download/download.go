@@ -131,9 +131,9 @@ func (download *Download) GetStatus() Status {
 }
 
 func (download *Download) GetProgress() (done, total int) {
-	// TODO
-
-	return 10, 20
+	// TODO: Refactor downloadedPieces.GetStatus.
+	downloadStatus := download.downloadedPieces.GetStatus()
+	return downloadStatus.Progress, downloadStatus.Total
 }
 
 func (download *Download) downloadFromAllPeers(

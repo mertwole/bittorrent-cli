@@ -18,7 +18,6 @@ import (
 
 	"github.com/mertwole/bittorrent-cli/download"
 	"github.com/mertwole/bittorrent-cli/download/bitfield"
-	"github.com/mertwole/bittorrent-cli/download/downloaded_files"
 )
 
 const torrentFileExtension = ".torrent"
@@ -223,17 +222,18 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	progressBarWidth := totalWidth
 	progressBar := ""
 
-	downloadStatus := model.DownloadedPieces.GetStatus()
-	switch downloadStatus.State {
-	case downloaded_files.PreparingFiles:
+	downloadStatus := model.GetStatus()
+	switch downloadStatus {
+	case download.PreparingFiles:
 		downloadProgressLabel = "preparing files"
-	case downloaded_files.CheckingHashes:
+	case download.CheckingHashes:
 		downloadProgressLabel = "checking files"
 
+		hashCheckProgress, total := model.GetProgress()
 		progressBar = progress.
 			New(progress.WithWidth(progressBarWidth), progress.WithSolidFill("#66F27D")).
-			ViewAs(float64(downloadStatus.Progress) / float64(downloadStatus.Total))
-	case downloaded_files.Ready:
+			ViewAs(float64(hashCheckProgress) / float64(total))
+	case download.Downloading:
 		downloadProgressLabel = "downloading"
 
 		downloadPercent := float64(downloadedPieces) / float64(totalPieces) * 100.
@@ -246,6 +246,9 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 		progressBar = composeDownloadedPiecesString(item.downloadedPieces, progressBarWidth)
 		progressBar += progress
+	case download.Paused:
+		downloadProgressLabel = "paused"
+		// TODO: Fill progressbar.
 	}
 
 	nameLabel := model.GetTorrentName()

@@ -20,10 +20,21 @@ import (
 const discoveredPeersQueueSize = 16
 const connectedPeersQueueSize = 16
 
+type Status uint8
+
+const (
+	PreparingFiles Status = iota
+	CheckingHashes
+	Downloading
+	Paused
+)
+
 type Download struct {
 	Pieces           *pieces.Pieces
-	DownloadedPieces *downloaded_files.DownloadedFiles
+	downloadedPieces *downloaded_files.DownloadedFiles
 	torrentInfo      *torrent_info.TorrentInfo
+
+	paused bool
 }
 
 func New(fileName string, downloadFolderName string) (*Download, error) {
@@ -40,11 +51,11 @@ func New(fileName string, downloadFolderName string) (*Download, error) {
 	pieces := pieces.New(len(torrentInfo.Pieces))
 	downloadedPieces := downloaded_files.New(torrentInfo, downloadFolderName)
 
-	return &Download{Pieces: pieces, DownloadedPieces: downloadedPieces, torrentInfo: torrentInfo}, nil
+	return &Download{Pieces: pieces, downloadedPieces: downloadedPieces, torrentInfo: torrentInfo}, nil
 }
 
 func (download *Download) Start() {
-	err := download.DownloadedPieces.Prepare(download.Pieces)
+	err := download.downloadedPieces.Prepare(download.Pieces)
 	if err != nil {
 		log.Fatalf("failed to prepare download files: %v", err)
 	}
@@ -83,8 +94,46 @@ func (download *Download) Start() {
 	}
 }
 
+func (download *Download) Stop() {
+	// TODO
+}
+
+func (download *Download) Pause() {
+	download.paused = true
+
+	// TODO: Actually pause download.
+}
+
+func (download *Download) Unpause() {
+	download.paused = false
+
+	// TODO: Actually unpause download.
+}
+
 func (download *Download) GetTorrentName() string {
 	return download.torrentInfo.Name
+}
+
+func (download *Download) GetStatus() Status {
+	if download.paused {
+		return Paused
+	}
+
+	downloadState := download.downloadedPieces.GetStatus().State
+	switch downloadState {
+	case downloaded_files.PreparingFiles:
+		return PreparingFiles
+	case downloaded_files.CheckingHashes:
+		return CheckingHashes
+	default:
+		return Downloading
+	}
+}
+
+func (download *Download) GetProgress() (done, total int) {
+	// TODO
+
+	return 10, 20
 }
 
 func (download *Download) downloadFromAllPeers(
@@ -141,7 +190,7 @@ func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo, connectio
 
 		log.Printf("handshaked with the peer %+v", peerInfo)
 
-		err = peer.StartExchange(download.torrentInfo, download.Pieces, download.DownloadedPieces)
+		err = peer.StartExchange(download.torrentInfo, download.Pieces, download.downloadedPieces)
 		if err != nil {
 			log.Printf("failed to download data from peer: %v. reconnecting", err)
 		}

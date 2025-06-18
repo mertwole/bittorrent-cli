@@ -98,16 +98,10 @@ func (download *Download) Stop() {
 	// TODO
 }
 
-func (download *Download) Pause() {
-	download.paused = true
+func (download *Download) TogglePause() {
+	download.paused = !download.paused
 
-	// TODO: Actually pause download.
-}
-
-func (download *Download) Unpause() {
-	download.paused = false
-
-	// TODO: Actually unpause download.
+	// TODO: Actually pause/unpause download.
 }
 
 func (download *Download) GetTorrentName() string {

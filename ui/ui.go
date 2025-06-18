@@ -126,6 +126,11 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			screen.additionRequest = true
 			filePickerCmd := screen.filePicker.Init()
 			command = tea.Batch(command, filePickerCmd)
+		case key.Matches(message, screen.keyMap.pauseUnpauseTorrent):
+			selected := screen.downloadList.SelectedItem()
+			if item, ok := selected.(downloadItem); ok {
+				item.model.TogglePause()
+			}
 		}
 	case tea.WindowSizeMsg:
 		screen.Width = message.Width

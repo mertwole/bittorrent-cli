@@ -102,6 +102,11 @@ func (tracker *Tracker) sendRequest() (*TrackerResponse, error) {
 	switch tracker.url.Scheme {
 	case "http":
 		return sendHTTPRequest(tracker.url, &announceRequest)
+	case "https":
+		url := *tracker.url
+		url.Scheme = "http"
+
+		return sendHTTPRequest(&url, &announceRequest)
 	case "udp":
 		return sendUDPRequest(tracker.url, &announceRequest)
 	default:

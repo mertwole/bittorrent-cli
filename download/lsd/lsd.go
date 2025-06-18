@@ -53,7 +53,7 @@ func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.Pee
 		}
 
 		listeningOnAny = true
-		go listenAnnouncements(*udpAddr, infoHash, cookie, listenInterface, discoveredPeers, errors)
+		go listenAnnouncements(*udpAddr, infoHash, cookie, listenInterface, discoveredPeers)
 	}
 
 	if !listeningOnAny {
@@ -94,11 +94,10 @@ func listenAnnouncements(
 	cookie string,
 	listenInterface net.Interface,
 	discoveredPeers chan<- tracker.PeerInfo,
-	errors chan<- error,
 ) {
 	conn, err := net.ListenPacket("udp", address.String())
 	if err != nil {
-		errors <- fmt.Errorf("failed to create UDP connection: %w", err)
+		log.Printf("failed to create UDP connection on interface %s: %v", listenInterface.Name, err)
 		return
 	}
 
@@ -106,22 +105,23 @@ func listenAnnouncements(
 
 	err = packetConn.JoinGroup(&listenInterface, &address)
 	if err != nil {
-		errors <- fmt.Errorf("failed to join multicast group: %w", err)
+		log.Printf("failed to join multicast group on interface %s: %v", listenInterface.Name, err)
 		return
 	}
 
 	err = packetConn.SetControlMessage(ipv4.FlagDst, true)
 	if err != nil {
-		errors <- fmt.Errorf("failed to set control message: %w", err)
-		return
+		log.Printf("failed to set control message on interface %s: %v", listenInterface.Name, err)
 	}
+
+	log.Printf("listening for LSD announcements on interface %s", listenInterface.Name)
 
 	for {
 		buffer := make([]byte, readMessageBufferSize)
 		messageLen, _, source, err := packetConn.ReadFrom(buffer)
 
 		if err != nil {
-			errors <- fmt.Errorf("failed to read UDP message: %w", err)
+			log.Printf("failed to read UDP message: %v", err)
 			return
 		}
 

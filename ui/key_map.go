@@ -10,6 +10,7 @@ type keyMap struct {
 
 	addTorrent          key.Binding
 	pauseUnpauseTorrent key.Binding
+	removeTorrent       key.Binding
 
 	toggleHelp key.Binding
 
@@ -23,7 +24,8 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.moveUp, k.moveDown, k.nextPage, k.previousPage},
-		{k.addTorrent, k.pauseUnpauseTorrent, k.toggleHelp, k.quit},
+		{k.addTorrent, k.pauseUnpauseTorrent, k.removeTorrent},
+		{k.toggleHelp, k.quit},
 	}
 }
 
@@ -52,6 +54,10 @@ func defaultKeyMap() keyMap {
 		pauseUnpauseTorrent: key.NewBinding(
 			key.WithKeys("p"),
 			key.WithHelp("p", "pause/unpause selected torrent"),
+		),
+		removeTorrent: key.NewBinding(
+			key.WithKeys("-"),
+			key.WithHelp("-", "remove selected torrent"),
 		),
 		toggleHelp: key.NewBinding(
 			key.WithKeys("?"),

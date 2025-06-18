@@ -131,6 +131,14 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if item, ok := selected.(downloadItem); ok {
 				item.model.TogglePause()
 			}
+		case key.Matches(message, screen.keyMap.removeTorrent):
+			selected := screen.downloadList.SelectedItem()
+			if item, ok := selected.(downloadItem); ok {
+				item.model.Stop()
+
+				selectedIndex := screen.downloadList.GlobalIndex()
+				screen.downloadList.RemoveItem(selectedIndex)
+			}
 		}
 	case tea.WindowSizeMsg:
 		screen.Width = message.Width

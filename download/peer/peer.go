@@ -397,6 +397,8 @@ func (peer *Peer) uploadPieces(downloadedPieces *downloaded_files.DownloadedFile
 			errors <- fmt.Errorf("error sending piece message: %w", err)
 			break
 		}
+
+		log.Printf("sent piece #%d", requestedPiece.Piece)
 	}
 }
 

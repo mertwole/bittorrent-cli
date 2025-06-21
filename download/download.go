@@ -90,11 +90,12 @@ func (download *Download) Start() {
 		go tracker.ListenForPeers(ctx, discoveredPeers)
 	}
 
+	// TODO: It should be shared across all the downloads.
 	lsdErrors := make(chan error)
 	go lsd.StartDiscovery(download.torrentInfo.InfoHash, discoveredPeers, lsdErrors)
 
 	connectedPeers := make(chan connectedPeer, connectedPeersQueueSize)
-	go download.acceptConnectionRequests(connectedPeers)
+	go download.acceptConnectionRequests(ctx, connectedPeers)
 
 	go download.downloadFromAllPeers(discoveredPeers, connectedPeers)
 
@@ -235,15 +236,26 @@ type connectedPeer struct {
 	connection *net.Conn
 }
 
-func (download *Download) acceptConnectionRequests(connectedPeers chan<- connectedPeer) {
-	// TODO: Use different ports for every download or accept connections outside of `download`.
+func (download *Download) acceptConnectionRequests(ctx context.Context, connectedPeers chan<- connectedPeer) {
+	// TODO: Use different ports for every download.
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", global_params.ConnectionListenPort))
 	if err != nil {
 		log.Printf("failed to create TCP listener: %v", err)
 		return
 	}
 
+	go func() {
+		<-ctx.Done()
+		listener.Close()
+	}()
+
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		conn, err := listener.Accept()
 		if err != nil {
 			log.Printf("failed to accept TCP connection: %v", err)
@@ -261,6 +273,10 @@ func (download *Download) acceptConnectionRequests(connectedPeers chan<- connect
 
 		log.Printf("accepted TCP connection from %+v", peerInfo)
 
-		connectedPeers <- connectedPeer{info: peerInfo, connection: &conn}
+		select {
+		case connectedPeers <- connectedPeer{info: peerInfo, connection: &conn}:
+		case <-ctx.Done():
+			return
+		}
 	}
 }

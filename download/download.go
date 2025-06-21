@@ -110,7 +110,10 @@ func (download *Download) Start() {
 
 func (download *Download) Stop() {
 	download.setPaused <- true
-	download.cancelCallback()
+
+	if download.cancelCallback != nil {
+		download.cancelCallback()
+	}
 }
 
 func (download *Download) TogglePause() {

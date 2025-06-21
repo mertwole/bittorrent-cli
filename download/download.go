@@ -1,6 +1,7 @@
 package download
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -19,11 +20,26 @@ import (
 
 const discoveredPeersQueueSize = 16
 const connectedPeersQueueSize = 16
+const setPausedChannelSize = 8
+
+type Status uint8
+
+const (
+	PreparingFiles Status = iota
+	CheckingHashes
+	Downloading
+	Paused
+)
 
 type Download struct {
 	Pieces           *pieces.Pieces
-	DownloadedPieces *downloaded_files.DownloadedFiles
+	downloadedPieces *downloaded_files.DownloadedFiles
 	torrentInfo      *torrent_info.TorrentInfo
+
+	paused    bool
+	setPaused chan bool
+
+	cancelCallback context.CancelFunc
 }
 
 func New(fileName string, downloadFolderName string) (*Download, error) {
@@ -40,11 +56,16 @@ func New(fileName string, downloadFolderName string) (*Download, error) {
 	pieces := pieces.New(len(torrentInfo.Pieces))
 	downloadedPieces := downloaded_files.New(torrentInfo, downloadFolderName)
 
-	return &Download{Pieces: pieces, DownloadedPieces: downloadedPieces, torrentInfo: torrentInfo}, nil
+	return &Download{
+		Pieces:           pieces,
+		downloadedPieces: downloadedPieces,
+		torrentInfo:      torrentInfo,
+		setPaused:        make(chan bool, setPausedChannelSize),
+	}, nil
 }
 
 func (download *Download) Start() {
-	err := download.DownloadedPieces.Prepare(download.Pieces)
+	err := download.downloadedPieces.Prepare(download.Pieces)
 	if err != nil {
 		log.Fatalf("failed to prepare download files: %v", err)
 	}
@@ -57,20 +78,24 @@ func (download *Download) Start() {
 
 	discoveredPeers := make(chan tracker.PeerInfo, discoveredPeersQueueSize)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	download.cancelCallback = cancel
+
 	for _, trackerURL := range download.torrentInfo.Trackers {
 		tracker := tracker.NewTracker(trackerURL,
 			download.torrentInfo.InfoHash,
 			download.torrentInfo.TotalLength,
 			peerID,
 		)
-		go tracker.ListenForPeers(discoveredPeers)
+		go tracker.ListenForPeers(ctx, discoveredPeers)
 	}
 
+	// TODO: It should be shared across all the downloads.
 	lsdErrors := make(chan error)
 	go lsd.StartDiscovery(download.torrentInfo.InfoHash, discoveredPeers, lsdErrors)
 
 	connectedPeers := make(chan connectedPeer, connectedPeersQueueSize)
-	go download.acceptConnectionRequests(connectedPeers)
+	go download.acceptConnectionRequests(ctx, connectedPeers)
 
 	go download.downloadFromAllPeers(discoveredPeers, connectedPeers)
 
@@ -83,17 +108,65 @@ func (download *Download) Start() {
 	}
 }
 
+func (download *Download) Stop() {
+	download.setPaused <- true
+
+	if download.cancelCallback != nil {
+		download.cancelCallback()
+	}
+}
+
+func (download *Download) TogglePause() {
+	download.paused = !download.paused
+	download.setPaused <- download.paused
+}
+
 func (download *Download) GetTorrentName() string {
 	return download.torrentInfo.Name
+}
+
+func (download *Download) GetStatus() Status {
+	if download.paused {
+		return Paused
+	}
+
+	downloadState := download.downloadedPieces.GetStatus().State
+	switch downloadState {
+	case downloaded_files.PreparingFiles:
+		return PreparingFiles
+	case downloaded_files.CheckingHashes:
+		return CheckingHashes
+	default:
+		return Downloading
+	}
+}
+
+func (download *Download) GetProgress() (done, total int) {
+	// TODO: Refactor downloadedPieces.GetStatus.
+	downloadStatus := download.downloadedPieces.GetStatus()
+	return downloadStatus.Progress, downloadStatus.Total
 }
 
 func (download *Download) downloadFromAllPeers(
 	discoveredPeers <-chan tracker.PeerInfo,
 	connectedPeers <-chan connectedPeer,
 ) {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	knownPeers := make([]tracker.PeerInfo, 0)
 	for {
 		select {
+		// TODO: aggregate state changes.
+		case pauseState := <-download.setPaused:
+			if pauseState {
+				cancel()
+			} else {
+				ctx, cancel = context.WithCancel(context.Background())
+
+				for _, knownPeer := range knownPeers {
+					go download.downloadFromPeer(ctx, &knownPeer, nil)
+				}
+			}
 		case newPeer := <-discoveredPeers:
 			alreadyKnown := false
 			for _, peer := range knownPeers {
@@ -105,7 +178,7 @@ func (download *Download) downloadFromAllPeers(
 
 			if !alreadyKnown {
 				knownPeers = append(knownPeers, newPeer)
-				go download.downloadFromPeer(&newPeer, nil)
+				go download.downloadFromPeer(ctx, &newPeer, nil)
 			}
 		case newPeer := <-connectedPeers:
 			alreadyKnown := false
@@ -118,14 +191,19 @@ func (download *Download) downloadFromAllPeers(
 
 			if !alreadyKnown {
 				knownPeers = append(knownPeers, newPeer.info)
-				go download.downloadFromPeer(&newPeer.info, newPeer.connection)
+				go download.downloadFromPeer(ctx, &newPeer.info, newPeer.connection)
 			}
 		}
 	}
 }
 
-func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo, connection *net.Conn) {
+func (download *Download) downloadFromPeer(
+	ctx context.Context,
+	peerInfo *tracker.PeerInfo,
+	connection *net.Conn,
+) {
 	for {
+		// TODO: Make cancellable.
 		peer := peer.Peer{}
 		err := peer.Connect(peerInfo, connection)
 		if err != nil {
@@ -133,6 +211,7 @@ func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo, connectio
 			return
 		}
 
+		// TODO: Make cancellable.
 		err = peer.Handshake(download.torrentInfo)
 		if err != nil {
 			log.Printf("failed to handshake with the peer: %v", err)
@@ -141,9 +220,16 @@ func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo, connectio
 
 		log.Printf("handshaked with the peer %+v", peerInfo)
 
-		err = peer.StartExchange(download.torrentInfo, download.Pieces, download.DownloadedPieces)
+		err = peer.StartExchange(ctx, download.torrentInfo, download.Pieces, download.downloadedPieces)
 		if err != nil {
 			log.Printf("failed to download data from peer: %v. reconnecting", err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			continue
 		}
 	}
 }
@@ -153,15 +239,26 @@ type connectedPeer struct {
 	connection *net.Conn
 }
 
-func (download *Download) acceptConnectionRequests(connectedPeers chan<- connectedPeer) {
-	// TODO: Use different ports for every download or accept connections outside of `download`.
+func (download *Download) acceptConnectionRequests(ctx context.Context, connectedPeers chan<- connectedPeer) {
+	// TODO: Use different ports for every download.
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", global_params.ConnectionListenPort))
 	if err != nil {
 		log.Printf("failed to create TCP listener: %v", err)
 		return
 	}
 
+	go func() {
+		<-ctx.Done()
+		listener.Close()
+	}()
+
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		conn, err := listener.Accept()
 		if err != nil {
 			log.Printf("failed to accept TCP connection: %v", err)
@@ -179,6 +276,10 @@ func (download *Download) acceptConnectionRequests(connectedPeers chan<- connect
 
 		log.Printf("accepted TCP connection from %+v", peerInfo)
 
-		connectedPeers <- connectedPeer{info: peerInfo, connection: &conn}
+		select {
+		case connectedPeers <- connectedPeer{info: peerInfo, connection: &conn}:
+		case <-ctx.Done():
+			return
+		}
 	}
 }

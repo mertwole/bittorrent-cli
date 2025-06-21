@@ -18,7 +18,6 @@ import (
 
 	"github.com/mertwole/bittorrent-cli/download"
 	"github.com/mertwole/bittorrent-cli/download/bitfield"
-	"github.com/mertwole/bittorrent-cli/download/downloaded_files"
 )
 
 const torrentFileExtension = ".torrent"
@@ -127,6 +126,19 @@ func (screen mainScreen) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			screen.additionRequest = true
 			filePickerCmd := screen.filePicker.Init()
 			command = tea.Batch(command, filePickerCmd)
+		case key.Matches(message, screen.keyMap.pauseUnpauseTorrent):
+			selected := screen.downloadList.SelectedItem()
+			if item, ok := selected.(downloadItem); ok {
+				item.model.TogglePause()
+			}
+		case key.Matches(message, screen.keyMap.removeTorrent):
+			selected := screen.downloadList.SelectedItem()
+			if item, ok := selected.(downloadItem); ok {
+				item.model.Stop()
+
+				selectedIndex := screen.downloadList.GlobalIndex()
+				screen.downloadList.RemoveItem(selectedIndex)
+			}
 		}
 	case tea.WindowSizeMsg:
 		screen.Width = message.Width
@@ -223,19 +235,28 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	progressBarWidth := totalWidth
 	progressBar := ""
 
-	downloadStatus := model.DownloadedPieces.GetStatus()
-	switch downloadStatus.State {
-	case downloaded_files.PreparingFiles:
-		downloadProgressLabel = "preparing files"
-	case downloaded_files.CheckingHashes:
-		downloadProgressLabel = "checking files"
+	downloadStatus := model.GetStatus()
 
+	switch downloadStatus {
+	case download.PreparingFiles:
+		downloadProgressLabel = "preparing files"
+	case download.CheckingHashes:
+		downloadProgressLabel = "checking files"
+	case download.Downloading:
+		downloadProgressLabel = "downloading"
+	case download.Paused:
+		downloadProgressLabel = "paused"
+	}
+
+	switch downloadStatus {
+	case download.PreparingFiles:
+		// TODO: Display something?
+	case download.CheckingHashes:
+		hashCheckProgress, total := model.GetProgress()
 		progressBar = progress.
 			New(progress.WithWidth(progressBarWidth), progress.WithSolidFill("#66F27D")).
-			ViewAs(float64(downloadStatus.Progress) / float64(downloadStatus.Total))
-	case downloaded_files.Ready:
-		downloadProgressLabel = "downloading"
-
+			ViewAs(float64(hashCheckProgress) / float64(total))
+	case download.Downloading, download.Paused:
 		downloadPercent := float64(downloadedPieces) / float64(totalPieces) * 100.
 
 		maxPercentageLength := len(" 100.0%")
@@ -258,17 +279,20 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		progressBar = "┆ " + progressBar
 	}
 
-	statusLabel = lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#4D756F", Dark: "#A5FAEC"}).
-		Render(statusLabel)
+	normalStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#2E6B38", Dark: "#66F27D"})
+	pausedStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#383838", Dark: "#ADADAD"})
 
-	downloadProgress := lipgloss.
-		NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#2E6B38", Dark: "#66F27D"}).
-		SetString(progressBar).
-		Render()
+	appliedStyle := normalStyle
+	if downloadStatus == download.Paused {
+		appliedStyle = pausedStyle
+	}
 
-	fmt.Fprintf(w, "%s\n%s", statusLabel, downloadProgress)
+	statusLabel = appliedStyle.Render(statusLabel)
+	progressBar = appliedStyle.Render(progressBar)
+
+	fmt.Fprintf(w, "%s\n%s", statusLabel, progressBar)
 }
 
 func composeDownloadedPiecesString(bitfield *bitfield.ConcurrentBitfield, targetLength int) string {

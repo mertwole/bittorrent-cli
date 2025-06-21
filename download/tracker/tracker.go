@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
@@ -64,10 +65,15 @@ func NewTracker(url *url.URL, infoHash [sha1.Size]byte, length int, peerID [20]b
 	}
 }
 
-func (tracker *Tracker) ListenForPeers(peers chan<- PeerInfo) {
+func (tracker *Tracker) ListenForPeers(ctx context.Context, peers chan<- PeerInfo) {
 	for {
-		time.Sleep(tracker.interval)
+		select {
+		case <-time.After(tracker.interval):
+		case <-ctx.Done():
+			return
+		}
 
+		// TODO: Make cancellable.
 		response, err := tracker.sendRequest()
 		if err != nil {
 			log.Printf("error sending request to the tracker: %v", err)
@@ -83,7 +89,11 @@ func (tracker *Tracker) ListenForPeers(peers chan<- PeerInfo) {
 
 		tracker.interval = time.Second * time.Duration(response.Interval)
 		for _, peer := range response.Peers {
-			peers <- peer
+			select {
+			case peers <- peer:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 }

@@ -38,6 +38,8 @@ type Download struct {
 
 	paused    bool
 	setPaused chan bool
+
+	cancelCallback context.CancelFunc
 }
 
 func New(fileName string, downloadFolderName string) (*Download, error) {
@@ -76,13 +78,16 @@ func (download *Download) Start() {
 
 	discoveredPeers := make(chan tracker.PeerInfo, discoveredPeersQueueSize)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	download.cancelCallback = cancel
+
 	for _, trackerURL := range download.torrentInfo.Trackers {
 		tracker := tracker.NewTracker(trackerURL,
 			download.torrentInfo.InfoHash,
 			download.torrentInfo.TotalLength,
 			peerID,
 		)
-		go tracker.ListenForPeers(discoveredPeers)
+		go tracker.ListenForPeers(ctx, discoveredPeers)
 	}
 
 	lsdErrors := make(chan error)
@@ -104,8 +109,7 @@ func (download *Download) Start() {
 
 func (download *Download) Stop() {
 	download.setPaused <- true
-
-	// TODO
+	download.cancelCallback()
 }
 
 func (download *Download) TogglePause() {

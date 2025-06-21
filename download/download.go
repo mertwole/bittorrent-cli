@@ -1,6 +1,7 @@
 package download
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -34,7 +35,8 @@ type Download struct {
 	downloadedPieces *downloaded_files.DownloadedFiles
 	torrentInfo      *torrent_info.TorrentInfo
 
-	paused bool
+	paused    bool
+	setPaused chan bool
 }
 
 func New(fileName string, downloadFolderName string) (*Download, error) {
@@ -51,7 +53,12 @@ func New(fileName string, downloadFolderName string) (*Download, error) {
 	pieces := pieces.New(len(torrentInfo.Pieces))
 	downloadedPieces := downloaded_files.New(torrentInfo, downloadFolderName)
 
-	return &Download{Pieces: pieces, downloadedPieces: downloadedPieces, torrentInfo: torrentInfo}, nil
+	return &Download{
+		Pieces:           pieces,
+		downloadedPieces: downloadedPieces,
+		torrentInfo:      torrentInfo,
+		setPaused:        make(chan bool),
+	}, nil
 }
 
 func (download *Download) Start() {
@@ -100,8 +107,7 @@ func (download *Download) Stop() {
 
 func (download *Download) TogglePause() {
 	download.paused = !download.paused
-
-	// TODO: Actually pause/unpause download.
+	download.setPaused <- download.paused
 }
 
 func (download *Download) GetTorrentName() string {
@@ -134,9 +140,22 @@ func (download *Download) downloadFromAllPeers(
 	discoveredPeers <-chan tracker.PeerInfo,
 	connectedPeers <-chan connectedPeer,
 ) {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	knownPeers := make([]tracker.PeerInfo, 0)
 	for {
 		select {
+		// TODO: aggregate state changes.
+		case pauseState := <-download.setPaused:
+			if pauseState {
+				cancel()
+			} else {
+				ctx, cancel = context.WithCancel(context.Background())
+
+				for _, knownPeer := range knownPeers {
+					go download.downloadFromPeer(ctx, &knownPeer, nil)
+				}
+			}
 		case newPeer := <-discoveredPeers:
 			alreadyKnown := false
 			for _, peer := range knownPeers {
@@ -148,7 +167,7 @@ func (download *Download) downloadFromAllPeers(
 
 			if !alreadyKnown {
 				knownPeers = append(knownPeers, newPeer)
-				go download.downloadFromPeer(&newPeer, nil)
+				go download.downloadFromPeer(ctx, &newPeer, nil)
 			}
 		case newPeer := <-connectedPeers:
 			alreadyKnown := false
@@ -161,14 +180,19 @@ func (download *Download) downloadFromAllPeers(
 
 			if !alreadyKnown {
 				knownPeers = append(knownPeers, newPeer.info)
-				go download.downloadFromPeer(&newPeer.info, newPeer.connection)
+				go download.downloadFromPeer(ctx, &newPeer.info, newPeer.connection)
 			}
 		}
 	}
 }
 
-func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo, connection *net.Conn) {
+func (download *Download) downloadFromPeer(
+	ctx context.Context,
+	peerInfo *tracker.PeerInfo,
+	connection *net.Conn,
+) {
 	for {
+		// TODO: Make cancellable.
 		peer := peer.Peer{}
 		err := peer.Connect(peerInfo, connection)
 		if err != nil {
@@ -176,6 +200,7 @@ func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo, connectio
 			return
 		}
 
+		// TODO: Make cancellable.
 		err = peer.Handshake(download.torrentInfo)
 		if err != nil {
 			log.Printf("failed to handshake with the peer: %v", err)
@@ -184,9 +209,16 @@ func (download *Download) downloadFromPeer(peerInfo *tracker.PeerInfo, connectio
 
 		log.Printf("handshaked with the peer %+v", peerInfo)
 
-		err = peer.StartExchange(download.torrentInfo, download.Pieces, download.downloadedPieces)
+		err = peer.StartExchange(ctx, download.torrentInfo, download.Pieces, download.downloadedPieces)
 		if err != nil {
 			log.Printf("failed to download data from peer: %v. reconnecting", err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			continue
 		}
 	}
 }

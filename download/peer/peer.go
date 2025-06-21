@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
@@ -107,6 +108,7 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 }
 
 func (peer *Peer) StartExchange(
+	ctx context.Context,
 	torrent *torrent_info.TorrentInfo,
 	pieces *pieces.Pieces,
 	downloadedPieces *downloaded_files.DownloadedFiles,
@@ -143,6 +145,9 @@ func (peer *Peer) StartExchange(
 	go peer.checkStalePieceRequests()
 
 	select {
+	case <-ctx.Done():
+		peer.connection.Close()
+		return nil
 	case err := <-sendKeepAliveErrors:
 		return err
 	case err := <-requestBlocksErrors:

@@ -20,6 +20,7 @@ import (
 
 const discoveredPeersQueueSize = 16
 const connectedPeersQueueSize = 16
+const setPausedChannelSize = 8
 
 type Status uint8
 
@@ -57,7 +58,7 @@ func New(fileName string, downloadFolderName string) (*Download, error) {
 		Pieces:           pieces,
 		downloadedPieces: downloadedPieces,
 		torrentInfo:      torrentInfo,
-		setPaused:        make(chan bool),
+		setPaused:        make(chan bool, setPausedChannelSize),
 	}, nil
 }
 
@@ -102,6 +103,8 @@ func (download *Download) Start() {
 }
 
 func (download *Download) Stop() {
+	download.setPaused <- true
+
 	// TODO
 }
 

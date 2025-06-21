@@ -236,19 +236,27 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	progressBar := ""
 
 	downloadStatus := model.GetStatus()
+
 	switch downloadStatus {
 	case download.PreparingFiles:
 		downloadProgressLabel = "preparing files"
 	case download.CheckingHashes:
 		downloadProgressLabel = "checking files"
+	case download.Downloading:
+		downloadProgressLabel = "downloading"
+	case download.Paused:
+		downloadProgressLabel = "paused"
+	}
 
+	switch downloadStatus {
+	case download.PreparingFiles:
+		// TODO: Display something?
+	case download.CheckingHashes:
 		hashCheckProgress, total := model.GetProgress()
 		progressBar = progress.
 			New(progress.WithWidth(progressBarWidth), progress.WithSolidFill("#66F27D")).
 			ViewAs(float64(hashCheckProgress) / float64(total))
-	case download.Downloading:
-		downloadProgressLabel = "downloading"
-
+	case download.Downloading, download.Paused:
 		downloadPercent := float64(downloadedPieces) / float64(totalPieces) * 100.
 
 		maxPercentageLength := len(" 100.0%")
@@ -259,9 +267,6 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 		progressBar = composeDownloadedPiecesString(item.downloadedPieces, progressBarWidth)
 		progressBar += progress
-	case download.Paused:
-		downloadProgressLabel = "paused"
-		// TODO: Fill progressbar.
 	}
 
 	nameLabel := model.GetTorrentName()
@@ -274,17 +279,20 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		progressBar = "┆ " + progressBar
 	}
 
-	statusLabel = lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#4D756F", Dark: "#A5FAEC"}).
-		Render(statusLabel)
+	normalStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#2E6B38", Dark: "#66F27D"})
+	pausedStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#383838", Dark: "#ADADAD"})
 
-	downloadProgress := lipgloss.
-		NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#2E6B38", Dark: "#66F27D"}).
-		SetString(progressBar).
-		Render()
+	appliedStyle := normalStyle
+	if downloadStatus == download.Paused {
+		appliedStyle = pausedStyle
+	}
 
-	fmt.Fprintf(w, "%s\n%s", statusLabel, downloadProgress)
+	statusLabel = appliedStyle.Render(statusLabel)
+	progressBar = appliedStyle.Render(progressBar)
+
+	fmt.Fprintf(w, "%s\n%s", statusLabel, progressBar)
 }
 
 func composeDownloadedPiecesString(bitfield *bitfield.ConcurrentBitfield, targetLength int) string {

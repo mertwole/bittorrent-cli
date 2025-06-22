@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/mertwole/bittorrent-cli/download/bitfield"
 	"github.com/mertwole/bittorrent-cli/download/downloaded_files"
 	"github.com/mertwole/bittorrent-cli/download/lsd"
 	"github.com/mertwole/bittorrent-cli/download/peer"
@@ -148,10 +149,10 @@ func (download *Download) GetStatus() Status {
 	}
 }
 
-func (download *Download) GetProgress() (done, total int) {
+func (download *Download) GetProgress() bitfield.Bitfield {
 	// TODO: Refactor downloadedPieces.GetStatus.
 	downloadStatus := download.downloadedPieces.GetStatus()
-	return downloadStatus.Progress, downloadStatus.Total
+	return downloadStatus.Progress
 }
 
 func (download *Download) downloadFromAllPeers(

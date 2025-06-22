@@ -223,7 +223,11 @@ func (peer *Peer) listen(
 				} else {
 					globalOffset := int(msg.Piece) * torrent.PieceLength
 					downloadedPieces.WritePiece(
-						downloaded_files.DownloadedPiece{Offset: globalOffset, Data: donePiece.Data},
+						downloaded_files.DownloadedPiece{
+							Index:  msg.Piece,
+							Offset: globalOffset,
+							Data:   donePiece.Data,
+						},
 					)
 
 					newState = pieces.Downloaded

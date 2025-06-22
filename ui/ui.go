@@ -215,15 +215,6 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 	model := item.model
 
-	downloadedPieces := 0
-	totalPieces := item.downloadedPieces.PieceCount()
-	piecesBitfield := item.downloadedPieces.GetBitfield()
-	for piece := range totalPieces {
-		if piecesBitfield.ContainsPiece(piece) {
-			downloadedPieces++
-		}
-	}
-
 	var downloadProgressLabel string
 
 	totalWidth := m.Width()
@@ -252,12 +243,15 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	case download.PreparingFiles:
 		// TODO: Display something?
 	case download.CheckingHashes:
-		hashCheckProgress, total := model.GetProgress()
+		hashCheckProgress := model.GetProgress()
 		progressBar = progress.
 			New(progress.WithWidth(progressBarWidth), progress.WithSolidFill("#66F27D")).
-			ViewAs(float64(hashCheckProgress) / float64(total))
+			ViewAs(float64(hashCheckProgress.SetPiecesCount()) / float64(hashCheckProgress.PieceCount()))
 	case download.Downloading, download.Paused:
-		downloadPercent := float64(downloadedPieces) / float64(totalPieces) * 100.
+		downloadProgress := model.GetProgress()
+
+		downloadPercent := float64(downloadProgress.SetPiecesCount()) /
+			float64(downloadProgress.PieceCount()) * 100.
 
 		maxPercentageLength := len(" 100.0%")
 		progressBarWidth -= maxPercentageLength
@@ -265,7 +259,7 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		progress := fmt.Sprintf("%.1f%%", downloadPercent)
 		progress = fmt.Sprintf("%*s", maxPercentageLength, progress)
 
-		progressBar = composeDownloadedPiecesString(item.downloadedPieces, progressBarWidth)
+		progressBar = composeDownloadedPiecesString(&downloadProgress, progressBarWidth)
 		progressBar += progress
 	}
 
@@ -295,7 +289,7 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	fmt.Fprintf(w, "%s\n%s", statusLabel, progressBar)
 }
 
-func composeDownloadedPiecesString(bitfield *bitfield.ConcurrentBitfield, targetLength int) string {
+func composeDownloadedPiecesString(bitfield *bitfield.Bitfield, targetLength int) string {
 	pieceCount := bitfield.PieceCount()
 
 	str := ""

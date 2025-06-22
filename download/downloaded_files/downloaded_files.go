@@ -185,6 +185,14 @@ func (download *DownloadedFiles) WritePiece(piece DownloadedPiece) error {
 				return fmt.Errorf("failed to write to file %s: %w", file.path, err)
 			}
 
+			download.mutex.Lock()
+			err = file.handle.Sync()
+			download.mutex.Unlock()
+
+			if err != nil {
+				return fmt.Errorf("failed to sync file %s to the disk: %w", file.path, err)
+			}
+
 			bytesWritten += bytesToWrite
 			if bytesWritten >= len(piece.Data) {
 				break

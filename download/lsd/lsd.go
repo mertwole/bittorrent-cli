@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/mertwole/bittorrent-cli/download/tracker"
-	"github.com/mertwole/bittorrent-cli/global_params"
 	"golang.org/x/net/ipv4"
 )
 
@@ -35,7 +34,12 @@ func multicastAddressIpv6() netip.AddrPort {
 }
 
 // TODO: Accept multiple info hashes.
-func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.PeerInfo, errors chan<- error) {
+func StartDiscovery(
+	infoHash [sha1.Size]byte,
+	discoveredPeers chan<- tracker.PeerInfo,
+	listeningPort uint16,
+	errors chan<- error,
+) {
 	udpAddr := net.UDPAddrFromAddrPort(multicastAddressIpv4())
 
 	cookie := strconv.FormatInt(rand.Int64(), 36)
@@ -64,7 +68,7 @@ func StartDiscovery(infoHash [sha1.Size]byte, discoveredPeers chan<- tracker.Pee
 	infoHashes := [1][sha1.Size]byte{infoHash}
 	message := btSearchMessage{
 		host:       udpAddr.String(),
-		port:       global_params.ConnectionListenPort,
+		port:       listeningPort,
 		infoHashes: infoHashes[:],
 		cookie:     cookie,
 	}

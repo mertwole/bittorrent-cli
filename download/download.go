@@ -150,9 +150,7 @@ func (download *Download) GetStatus() Status {
 }
 
 func (download *Download) GetProgress() bitfield.Bitfield {
-	// TODO: Refactor downloadedPieces.GetStatus.
-	downloadStatus := download.downloadedPieces.GetStatus()
-	return downloadStatus.Progress
+	return download.downloadedPieces.GetStatus().Progress
 }
 
 func (download *Download) downloadFromAllPeers(

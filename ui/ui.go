@@ -235,6 +235,8 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		downloadProgressLabel = "checking files"
 	case download.Downloading:
 		downloadProgressLabel = "downloading"
+	case download.Done:
+		downloadProgressLabel = "done"
 	case download.Paused:
 		downloadProgressLabel = "paused"
 	}
@@ -247,7 +249,7 @@ func (d downloadItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		progressBar = progress.
 			New(progress.WithWidth(progressBarWidth), progress.WithSolidFill("#66F27D")).
 			ViewAs(float64(hashCheckProgress.SetPiecesCount()) / float64(hashCheckProgress.PieceCount()))
-	case download.Downloading, download.Paused:
+	case download.Downloading, download.Paused, download.Done:
 		downloadProgress := model.GetProgress()
 
 		downloadPercent := float64(downloadProgress.SetPiecesCount()) /

@@ -43,7 +43,8 @@ type State uint8
 const (
 	PreparingFiles State = 0
 	CheckingHashes State = 1
-	Ready          State = 2
+	Downloading    State = 2
+	Ready          State = 3
 )
 
 func New(
@@ -118,7 +119,7 @@ func (download *DownloadedFiles) Prepare(pieces *pieces.Pieces) error {
 	}
 
 	download.status.mutex.Lock()
-	download.status.State = Ready
+	download.status.State = Downloading
 	download.status.Progress = pieces.GetBitfield()
 	download.status.mutex.Unlock()
 
@@ -195,6 +196,9 @@ func (download *DownloadedFiles) WritePiece(piece DownloadedPiece) error {
 
 	download.status.mutex.Lock()
 	download.status.Progress.AddPiece(piece.Index)
+	if download.status.Progress.SetPiecesCount() == download.status.Progress.PieceCount() {
+		download.status.State = Ready
+	}
 	download.status.mutex.Unlock()
 
 	return nil

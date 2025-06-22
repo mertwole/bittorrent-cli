@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/mertwole/bittorrent-cli/download/bitfield"
 	"github.com/mertwole/bittorrent-cli/download/pieces"
 	"github.com/mertwole/bittorrent-cli/download/torrent_info"
 )
 
 type DownloadedPiece struct {
+	Index  int
 	Offset int
 	Data   []byte
 }
@@ -32,8 +34,7 @@ type downloadedFile struct {
 
 type Status struct {
 	State    State
-	Progress int
-	Total    int
+	Progress bitfield.Bitfield
 	mutex    sync.RWMutex
 }
 
@@ -42,17 +43,26 @@ type State uint8
 const (
 	PreparingFiles State = 0
 	CheckingHashes State = 1
-	Ready          State = 2
+	Downloading    State = 2
+	Ready          State = 3
 )
 
 func New(
 	torrent *torrent_info.TorrentInfo,
 	targetFolder string,
 ) *DownloadedFiles {
+	totalFileCount := 1
+	if len(torrent.Files) != 0 {
+		totalFileCount = len(torrent.Files)
+	}
+
 	downloadedFiles := DownloadedFiles{
 		pieceLength: torrent.PieceLength,
 		pieceHashes: torrent.Pieces,
-		status:      Status{State: PreparingFiles, Progress: 0, Total: 0},
+		status: Status{
+			State:    PreparingFiles,
+			Progress: bitfield.NewEmptyBitfield(totalFileCount),
+		},
 	}
 
 	if len(torrent.Files) == 0 {
@@ -87,12 +97,19 @@ func (download *DownloadedFiles) Prepare(pieces *pieces.Pieces) error {
 		if fileAction == opened {
 			anyOpened = true
 		}
+
+		download.status.mutex.Lock()
+		download.status.Progress.AddPiece(i)
+		download.status.mutex.Unlock()
 	}
+
+	download.status.mutex.Lock()
+	download.status.Progress = bitfield.NewEmptyBitfield(pieces.Length())
+	download.status.mutex.Unlock()
 
 	if anyOpened {
 		download.status.mutex.Lock()
 		download.status.State = CheckingHashes
-		download.status.Total = pieces.Length()
 		download.status.mutex.Unlock()
 
 		err := download.scanDonePieces(pieces)
@@ -102,7 +119,8 @@ func (download *DownloadedFiles) Prepare(pieces *pieces.Pieces) error {
 	}
 
 	download.status.mutex.Lock()
-	download.status.State = Ready
+	download.status.State = Downloading
+	download.status.Progress = pieces.GetBitfield()
 	download.status.mutex.Unlock()
 
 	return nil
@@ -167,6 +185,14 @@ func (download *DownloadedFiles) WritePiece(piece DownloadedPiece) error {
 				return fmt.Errorf("failed to write to file %s: %w", file.path, err)
 			}
 
+			download.mutex.Lock()
+			err = file.handle.Sync()
+			download.mutex.Unlock()
+
+			if err != nil {
+				return fmt.Errorf("failed to sync file %s to the disk: %w", file.path, err)
+			}
+
 			bytesWritten += bytesToWrite
 			if bytesWritten >= len(piece.Data) {
 				break
@@ -175,6 +201,13 @@ func (download *DownloadedFiles) WritePiece(piece DownloadedPiece) error {
 
 		currentOffset += file.length
 	}
+
+	download.status.mutex.Lock()
+	download.status.Progress.AddPiece(piece.Index)
+	if download.status.Progress.SetPiecesCount() == download.status.Progress.PieceCount() {
+		download.status.State = Ready
+	}
+	download.status.mutex.Unlock()
 
 	return nil
 }
@@ -242,7 +275,7 @@ func (download *DownloadedFiles) scanDonePieces(pcs *pieces.Pieces) error {
 		}
 
 		download.status.mutex.Lock()
-		download.status.Progress++
+		download.status.Progress.AddPiece(i)
 		download.status.mutex.Unlock()
 	}
 

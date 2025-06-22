@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/mertwole/bittorrent-cli/download/bitfield"
 	"github.com/mertwole/bittorrent-cli/download/downloaded_files"
 	"github.com/mertwole/bittorrent-cli/download/lsd"
 	"github.com/mertwole/bittorrent-cli/download/peer"
@@ -31,6 +32,7 @@ const (
 	CheckingHashes
 	Downloading
 	Paused
+	Done
 )
 
 type Download struct {
@@ -143,15 +145,18 @@ func (download *Download) GetStatus() Status {
 		return PreparingFiles
 	case downloaded_files.CheckingHashes:
 		return CheckingHashes
-	default:
+	case downloaded_files.Downloading:
 		return Downloading
+	case downloaded_files.Ready:
+		return Done
+	default:
+		log.Panicf("unknown state of downloadedPieces")
+		return 0
 	}
 }
 
-func (download *Download) GetProgress() (done, total int) {
-	// TODO: Refactor downloadedPieces.GetStatus.
-	downloadStatus := download.downloadedPieces.GetStatus()
-	return downloadStatus.Progress, downloadStatus.Total
+func (download *Download) GetProgress() bitfield.Bitfield {
+	return download.downloadedPieces.GetStatus().Progress
 }
 
 func (download *Download) downloadFromAllPeers(

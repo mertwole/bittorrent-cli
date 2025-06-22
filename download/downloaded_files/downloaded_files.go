@@ -96,12 +96,19 @@ func (download *DownloadedFiles) Prepare(pieces *pieces.Pieces) error {
 		if fileAction == opened {
 			anyOpened = true
 		}
+
+		download.status.mutex.Lock()
+		download.status.Progress.AddPiece(i)
+		download.status.mutex.Unlock()
 	}
+
+	download.status.mutex.Lock()
+	download.status.Progress = bitfield.NewEmptyBitfield(pieces.Length())
+	download.status.mutex.Unlock()
 
 	if anyOpened {
 		download.status.mutex.Lock()
 		download.status.State = CheckingHashes
-		download.status.Progress = bitfield.NewEmptyBitfield(pieces.Length())
 		download.status.mutex.Unlock()
 
 		err := download.scanDonePieces(pieces)
@@ -112,6 +119,7 @@ func (download *DownloadedFiles) Prepare(pieces *pieces.Pieces) error {
 
 	download.status.mutex.Lock()
 	download.status.State = Ready
+	download.status.Progress = pieces.GetBitfield()
 	download.status.mutex.Unlock()
 
 	return nil

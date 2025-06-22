@@ -84,7 +84,7 @@ func (download *Download) Start() {
 	download.cancelCallback = cancel
 
 	connectedPeers := make(chan connectedPeer, connectedPeersQueueSize)
-	listener, _, err := createTCPListener()
+	listener, listenPort, err := createTCPListener()
 	if err != nil {
 		log.Printf("failed to create TCP listener: %v", err)
 	} else {
@@ -97,12 +97,12 @@ func (download *Download) Start() {
 			download.torrentInfo.TotalLength,
 			peerID,
 		)
-		go tracker.ListenForPeers(ctx, discoveredPeers)
+		go tracker.ListenForPeers(ctx, listenPort, discoveredPeers)
 	}
 
 	// TODO: It should be shared across all the downloads.
 	lsdErrors := make(chan error)
-	go lsd.StartDiscovery(download.torrentInfo.InfoHash, discoveredPeers, lsdErrors)
+	go lsd.StartDiscovery(download.torrentInfo.InfoHash, discoveredPeers, listenPort, lsdErrors)
 
 	go download.downloadFromAllPeers(discoveredPeers, connectedPeers)
 

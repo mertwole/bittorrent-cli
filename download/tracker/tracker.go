@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/mertwole/bittorrent-cli/download/bencode"
-	"github.com/mertwole/bittorrent-cli/global_params"
 )
 
 const maxAnnounceResponseLength = 1024
@@ -45,6 +44,7 @@ type announceRequest struct {
 	downloaded uint64
 	left       uint64
 	uploaded   uint64
+	port       uint16
 }
 
 type Tracker struct {
@@ -65,7 +65,7 @@ func NewTracker(url *url.URL, infoHash [sha1.Size]byte, length int, peerID [20]b
 	}
 }
 
-func (tracker *Tracker) ListenForPeers(ctx context.Context, peers chan<- PeerInfo) {
+func (tracker *Tracker) ListenForPeers(ctx context.Context, listeningPort uint16, peers chan<- PeerInfo) {
 	for {
 		select {
 		case <-time.After(tracker.interval):
@@ -74,7 +74,7 @@ func (tracker *Tracker) ListenForPeers(ctx context.Context, peers chan<- PeerInf
 		}
 
 		// TODO: Make cancellable.
-		response, err := tracker.sendRequest()
+		response, err := tracker.sendRequest(listeningPort)
 		if err != nil {
 			log.Printf("error sending request to the tracker: %v", err)
 
@@ -98,7 +98,7 @@ func (tracker *Tracker) ListenForPeers(ctx context.Context, peers chan<- PeerInf
 	}
 }
 
-func (tracker *Tracker) sendRequest() (*TrackerResponse, error) {
+func (tracker *Tracker) sendRequest(listenPort uint16) (*TrackerResponse, error) {
 	peerID := [20]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 
 	announceRequest := announceRequest{
@@ -107,6 +107,7 @@ func (tracker *Tracker) sendRequest() (*TrackerResponse, error) {
 		downloaded: 0,
 		uploaded:   0,
 		left:       uint64(tracker.length),
+		port:       listenPort,
 	}
 
 	switch tracker.url.Scheme {
@@ -128,12 +129,10 @@ func sendHTTPRequest(
 	address *url.URL,
 	announceRequest *announceRequest,
 ) (*TrackerResponse, error) {
-	Port := global_params.ConnectionListenPort
-
 	address.RawQuery = url.Values{
 		"info_hash":  []string{string(announceRequest.infoHash[:])},
 		"peer_id":    []string{string(announceRequest.peerID[:])},
-		"port":       []string{strconv.Itoa(int(Port))},
+		"port":       []string{strconv.Itoa(int(announceRequest.port))},
 		"uploaded":   []string{strconv.FormatUint(announceRequest.uploaded, 10)},
 		"downloaded": []string{strconv.FormatUint(announceRequest.downloaded, 10)},
 		"compact":    []string{"1"},
@@ -281,7 +280,6 @@ func sendUDPAnnounceRequest(
 	announceRequest *announceRequest,
 	urlData string,
 ) (*TrackerResponse, error) {
-	port := uint16(global_params.ConnectionListenPort)
 	var key uint32 = 0xAABBCCDD
 
 	// Offset  Size    			Name    		Value
@@ -314,7 +312,7 @@ func sendUDPAnnounceRequest(
 	// TODO: IP address
 	binary.BigEndian.PutUint32(request[88:92], key)
 	copy(request[92:96], []byte{0xFF, 0xFF, 0xFF, 0xFF}) // num_want: default: -1
-	binary.BigEndian.PutUint16(request[96:98], port)
+	binary.BigEndian.PutUint16(request[96:98], announceRequest.port)
 
 	encodedURLData := encodeURLData(urlData)
 	request = append(request, encodedURLData...)

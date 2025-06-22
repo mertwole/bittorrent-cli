@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net"
 	"net/netip"
 	"os"
@@ -21,6 +22,7 @@ import (
 const discoveredPeersQueueSize = 16
 const connectedPeersQueueSize = 16
 const setPausedChannelSize = 8
+const listenRetries = 16
 
 type Status uint8
 
@@ -81,6 +83,14 @@ func (download *Download) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	download.cancelCallback = cancel
 
+	connectedPeers := make(chan connectedPeer, connectedPeersQueueSize)
+	listener, _, err := createTCPListener()
+	if err != nil {
+		log.Printf("failed to create TCP listener: %v", err)
+	} else {
+		go download.acceptConnectionRequests(ctx, listener, connectedPeers)
+	}
+
 	for _, trackerURL := range download.torrentInfo.Trackers {
 		tracker := tracker.NewTracker(trackerURL,
 			download.torrentInfo.InfoHash,
@@ -93,9 +103,6 @@ func (download *Download) Start() {
 	// TODO: It should be shared across all the downloads.
 	lsdErrors := make(chan error)
 	go lsd.StartDiscovery(download.torrentInfo.InfoHash, discoveredPeers, lsdErrors)
-
-	connectedPeers := make(chan connectedPeer, connectedPeersQueueSize)
-	go download.acceptConnectionRequests(ctx, connectedPeers)
 
 	go download.downloadFromAllPeers(discoveredPeers, connectedPeers)
 
@@ -239,14 +246,33 @@ type connectedPeer struct {
 	connection *net.Conn
 }
 
-func (download *Download) acceptConnectionRequests(ctx context.Context, connectedPeers chan<- connectedPeer) {
-	// TODO: Use different ports for every download.
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", global_params.ConnectionListenPort))
-	if err != nil {
-		log.Printf("failed to create TCP listener: %v", err)
-		return
+func createTCPListener() (listener net.Listener, listenPort uint16, err error) {
+	for i := range listenRetries {
+		listenPort = uint16(
+			rand.Int()%
+				(global_params.ConnectionListenPortMax-global_params.ConnectionListenPortMin+1) +
+				global_params.ConnectionListenPortMin)
+
+		newListener, err := net.Listen("tcp", fmt.Sprintf(":%d", listenPort))
+		if err != nil {
+			if i+1 == listenRetries {
+				return nil, 0, fmt.Errorf("failed to create TCP listener: %w", err)
+			}
+
+			log.Printf("failed to create TCP listener on the port %d; %v", listenPort, err)
+		}
+
+		listener = newListener
 	}
 
+	return listener, listenPort, nil
+}
+
+func (download *Download) acceptConnectionRequests(
+	ctx context.Context,
+	listener net.Listener,
+	connectedPeers chan<- connectedPeer,
+) {
 	go func() {
 		<-ctx.Done()
 		listener.Close()

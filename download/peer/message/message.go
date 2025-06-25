@@ -8,6 +8,7 @@ import (
 	"log"
 
 	"github.com/mertwole/bittorrent-cli/download/bencode"
+	"github.com/mertwole/bittorrent-cli/download/peer/constants"
 )
 
 const maxPayloadLength = 100_000_000
@@ -27,7 +28,15 @@ const (
 	extendedMsgID      messageID = 20
 )
 
-const extendedHandshakeMsgID messageID = 0
+const (
+	extendedHandshakeMsgID messageID = 0
+)
+
+const (
+	utMetadataRequest messageID = 0
+	utMetadataData    messageID = 1
+	utMetadataReject  messageID = 2
+)
 
 type Choke struct{}
 type Unchoke struct{}
@@ -70,6 +79,16 @@ type ExtendedHandshake struct {
 	//IPv6                *net.IP 		`bencode:"ipv6"`
 	//IPv4                *net.IP 		`bencode:"ipv4"`
 	//RequestQueueLength  *int 			`bencode:"reqq"`
+	// BEP9 - Extension for Peers to Send Metadata Files (Magnet Links)
+	MetadataSize *int `bencode:"metadata_size"`
+}
+
+type UtMetadata struct {
+	MessageType messageID `bencode:"msg_type"`
+	Piece       int       `bencode:"piece"`
+	TotalSize   *int      `bencode:"total_size"`
+
+	dataPayload []byte
 }
 
 type Message interface {
@@ -149,6 +168,30 @@ func (msg *ExtendedHandshake) Encode() []byte {
 	}
 
 	extendedMessage := extended{extendedMessageID: extendedHandshakeMsgID, payload: encodedDictionary.Bytes()}
+	return extendedMessage.Encode()
+}
+
+func (msg *UtMetadata) Encode() []byte {
+	var encodedDictionary bytes.Buffer
+	err := bencode.Serialize(&encodedDictionary, *msg)
+	if err != nil {
+		log.Panicf("cannot encode ExtendedHandshake message: %v", err)
+	}
+
+	if msg.MessageType == utMetadataData {
+		_, err := encodedDictionary.Write(msg.dataPayload)
+		if err != nil {
+			log.Panicf("cannot wtire array to the buffer: %v", err)
+		}
+	}
+
+	supportedExtensions := constants.SupportedExtensions()
+	msgID, ok := supportedExtensions.GetID(constants.UtMetadataExtensionName)
+	if !ok {
+		log.Panicf("failed to get extension ID by name: %v", err)
+	}
+
+	extendedMessage := extended{extendedMessageID: messageID(msgID), payload: encodedDictionary.Bytes()}
 	return extendedMessage.Encode()
 }
 
@@ -245,10 +288,9 @@ func Decode(reader io.Reader) (Message, error) {
 }
 
 func (extended *extended) decode() (Message, error) {
-	switch extended.extendedMessageID {
-	case extendedHandshakeMsgID:
-		buffer := bytes.NewBuffer(extended.payload)
+	buffer := bytes.NewBuffer(extended.payload)
 
+	if extended.extendedMessageID == extendedHandshakeMsgID {
 		decoded := ExtendedHandshake{}
 		err := bencode.Deserialize(buffer, &decoded)
 		if err != nil {
@@ -256,7 +298,34 @@ func (extended *extended) decode() (Message, error) {
 		}
 
 		return &decoded, nil
-	default:
+	}
+
+	supportedExtensions := constants.SupportedExtensions()
+	name, ok := supportedExtensions.FindNameByID(int(extended.extendedMessageID))
+	if !ok {
 		return nil, fmt.Errorf("invalid extended message id: %d", extended.extendedMessageID)
+	}
+
+	switch name {
+	case constants.UtMetadataExtensionName:
+		decoded := UtMetadata{}
+		err := bencode.Deserialize(buffer, &decoded)
+		if err != nil {
+			return nil, fmt.Errorf("invalid extended handshake message: %w", err)
+		}
+
+		if decoded.MessageType == utMetadataData {
+			dataPayload, err := io.ReadAll(buffer)
+			if err != nil {
+				log.Panicf("error while reading data from buffer: %v", err)
+			}
+
+			decoded.dataPayload = dataPayload
+		}
+
+		return &decoded, nil
+	default:
+		log.Panicf("unknown extended message: %s", name)
+		return nil, nil
 	}
 }

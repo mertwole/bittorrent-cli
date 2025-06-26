@@ -107,6 +107,52 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 	return nil
 }
 
+func (peer *Peer) RequestMetadata() ([]byte, error) {
+	var data []byte
+	currentPiece := 0
+	for {
+		request := message.UtMetadataRequest{Piece: currentPiece}
+		_, err := peer.connection.Write(request.Encode())
+		if err != nil {
+			return nil, fmt.Errorf("failed to send metadata request: %w", err)
+		}
+
+		receivedMessage, err := message.Decode(peer.connection)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode message: %w", err)
+		}
+
+	Receiving:
+		for {
+			switch msg := receivedMessage.(type) {
+			case *message.UtMetadataData:
+				if msg.Piece != currentPiece {
+					break
+				} else {
+					currentPiece++
+				}
+
+				if data == nil {
+					data = make([]byte, msg.TotalSize)
+				}
+
+				startIndex := msg.Piece * constants.UtMetadataBlockLength
+				endIndex := startIndex + len(msg.Data)
+
+				copy(data[startIndex:endIndex], msg.Data)
+
+				if currentPiece*constants.UtMetadataBlockLength >= len(data) {
+					return data, nil
+				}
+
+				break Receiving
+			case *message.UtMetadataReject:
+				return nil, fmt.Errorf("peer rejected to provide ut_metadata data")
+			}
+		}
+	}
+}
+
 func (peer *Peer) StartExchange(
 	ctx context.Context,
 	torrent *torrent_info.TorrentInfo,
@@ -254,6 +300,11 @@ func (peer *Peer) listen(
 				errors <- fmt.Errorf("failed to decode extensions: %w", err)
 			}
 			peer.clientName = msg.ClientName
+		case *message.UtMetadataRequest,
+			*message.UtMetadataData,
+			*message.UtMetadataReject,
+			*message.UtMetadataUnknown:
+			log.Printf("unexpected ut_metadata message received")
 		}
 	}
 }

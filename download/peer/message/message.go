@@ -83,13 +83,26 @@ type ExtendedHandshake struct {
 	MetadataSize *int `bencode:"metadata_size"`
 }
 
-type UtMetadata struct {
+type utMetadata struct {
 	MessageType messageID `bencode:"msg_type"`
 	Piece       int       `bencode:"piece"`
 	TotalSize   *int      `bencode:"total_size"`
 
 	dataPayload []byte
 }
+
+type UtMetadataRequest struct {
+	Piece int
+}
+type UtMetadataData struct {
+	Piece     int
+	TotalSize int
+	Data      []byte
+}
+type UtMetadataReject struct {
+	Piece int
+}
+type UtMetadataUnknown struct{}
 
 type Message interface {
 	Encode() []byte
@@ -171,7 +184,7 @@ func (msg *ExtendedHandshake) Encode() []byte {
 	return extendedMessage.Encode()
 }
 
-func (msg *UtMetadata) Encode() []byte {
+func (msg *utMetadata) Encode() []byte {
 	var encodedDictionary bytes.Buffer
 	err := bencode.Serialize(&encodedDictionary, *msg)
 	if err != nil {
@@ -193,6 +206,23 @@ func (msg *UtMetadata) Encode() []byte {
 
 	extendedMessage := extended{extendedMessageID: messageID(msgID), payload: encodedDictionary.Bytes()}
 	return extendedMessage.Encode()
+}
+
+func (msg *UtMetadataRequest) Encode() []byte {
+	return (&utMetadata{Piece: msg.Piece}).Encode()
+}
+
+func (msg *UtMetadataData) Encode() []byte {
+	return (&utMetadata{Piece: msg.Piece, TotalSize: &msg.TotalSize, dataPayload: msg.Data}).Encode()
+}
+
+func (msg *UtMetadataReject) Encode() []byte {
+	return (&utMetadata{Piece: msg.Piece}).Encode()
+}
+
+func (msg *UtMetadataUnknown) Encode() []byte {
+	log.Panicf("cannot encode unknown ut_metadata message")
+	return nil
 }
 
 func (msg *KeepAlive) Encode() []byte {
@@ -308,22 +338,36 @@ func (extended *extended) decode() (Message, error) {
 
 	switch name {
 	case constants.UtMetadataExtensionName:
-		decoded := UtMetadata{}
+		decoded := utMetadata{}
 		err := bencode.Deserialize(buffer, &decoded)
 		if err != nil {
 			return nil, fmt.Errorf("invalid extended handshake message: %w", err)
 		}
 
-		if decoded.MessageType == utMetadataData {
+		switch decoded.MessageType {
+		case utMetadataRequest:
+			return &UtMetadataRequest{Piece: decoded.Piece}, nil
+		case utMetadataData:
 			dataPayload, err := io.ReadAll(buffer)
 			if err != nil {
 				log.Panicf("error while reading data from buffer: %v", err)
 			}
 
-			decoded.dataPayload = dataPayload
-		}
+			if decoded.TotalSize == nil {
+				return nil, fmt.Errorf("failed to decode ut_metadata message: %w", err)
+			}
 
-		return &decoded, nil
+			return &UtMetadataData{
+				Piece:     decoded.Piece,
+				TotalSize: *decoded.TotalSize,
+				Data:      dataPayload,
+			}, nil
+		case utMetadataReject:
+			return &UtMetadataReject{Piece: decoded.Piece}, nil
+		default:
+			log.Printf("unknown ut_metadata message type: %d", decoded.MessageType)
+			return &UtMetadataUnknown{}, nil
+		}
 	default:
 		log.Panicf("unknown extended message: %s", name)
 		return nil, nil

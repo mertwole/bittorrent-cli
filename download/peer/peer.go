@@ -68,10 +68,10 @@ func (peer *Peer) Connect(info *tracker.PeerInfo, existingConnection *net.Conn) 
 	return nil
 }
 
-func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
+func (peer *Peer) Handshake(infoHash [sha1.Size]byte) error {
 	handshake := Handshake{
 		PeerID:   [20]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0},
-		InfoHash: torrent.InfoHash,
+		InfoHash: infoHash,
 	}
 	serializedHandshake := handshake.serialize()
 
@@ -85,11 +85,11 @@ func (peer *Peer) Handshake(torrent *torrent_info.TorrentInfo) error {
 		return fmt.Errorf("failed to decode handshake from peer %s: %w", peer.info.IP.String(), err)
 	}
 
-	if responseHandshake.InfoHash != torrent.InfoHash {
+	if responseHandshake.InfoHash != infoHash {
 		return fmt.Errorf(
 			"invalid info hash received from the peer %s: expected %v, got %v",
 			peer.info.IP.String(),
-			torrent.InfoHash,
+			infoHash,
 			responseHandshake.InfoHash,
 		)
 	}

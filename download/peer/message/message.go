@@ -33,9 +33,9 @@ const (
 )
 
 const (
-	utMetadataRequest messageID = 0
-	utMetadataData    messageID = 1
-	utMetadataReject  messageID = 2
+	utMetadataRequest int = 0
+	utMetadataData    int = 1
+	utMetadataReject  int = 2
 )
 
 type Choke struct{}
@@ -84,9 +84,9 @@ type ExtendedHandshake struct {
 }
 
 type utMetadata struct {
-	MessageType messageID `bencode:"msg_type"`
-	Piece       int       `bencode:"piece"`
-	TotalSize   *int      `bencode:"total_size"`
+	MessageType int  `bencode:"msg_type"`
+	Piece       int  `bencode:"piece"`
+	TotalSize   *int `bencode:"total_size"`
 
 	dataPayload []byte
 }
@@ -209,15 +209,20 @@ func (msg *utMetadata) Encode() []byte {
 }
 
 func (msg *UtMetadataRequest) Encode() []byte {
-	return (&utMetadata{Piece: msg.Piece}).Encode()
+	return (&utMetadata{MessageType: utMetadataRequest, Piece: msg.Piece}).Encode()
 }
 
 func (msg *UtMetadataData) Encode() []byte {
-	return (&utMetadata{Piece: msg.Piece, TotalSize: &msg.TotalSize, dataPayload: msg.Data}).Encode()
+	return (&utMetadata{
+		MessageType: utMetadataData,
+		Piece:       msg.Piece,
+		TotalSize:   &msg.TotalSize,
+		dataPayload: msg.Data,
+	}).Encode()
 }
 
 func (msg *UtMetadataReject) Encode() []byte {
-	return (&utMetadata{Piece: msg.Piece}).Encode()
+	return (&utMetadata{MessageType: utMetadataReject, Piece: msg.Piece}).Encode()
 }
 
 func (msg *UtMetadataUnknown) Encode() []byte {

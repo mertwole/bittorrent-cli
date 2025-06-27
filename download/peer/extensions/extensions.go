@@ -14,7 +14,7 @@ func New(supportedExtensions []string) (Extensions, error) {
 	extensions := Empty()
 
 	for i, extension := range supportedExtensions {
-		err := extensions.Insert(extension, i)
+		err := extensions.Insert(extension, i+1)
 		if err != nil {
 			return Extensions{}, err
 		}
@@ -69,6 +69,16 @@ func (extensions *Extensions) Insert(name string, id int) error {
 func (extensions *Extensions) GetID(name string) (int, bool) {
 	id, ok := extensions.extensions[name]
 	return id, ok
+}
+
+func (extensions *Extensions) FindNameByID(id int) (string, bool) {
+	for name, idx := range extensions.extensions {
+		if id == idx {
+			return name, true
+		}
+	}
+
+	return "", false
 }
 
 func (extensions *Extensions) GetMapping() map[string]int {

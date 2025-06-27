@@ -15,9 +15,14 @@ const PieceRequestTimeout = time.Second * 120
 const CancelMessagesSendInterval = time.Millisecond * 100
 const BlockSize = 1 << 14
 const PendingPiecesQueueLength = 5
+const UtMetadataBlockLength = 16384
+
+const (
+	UtMetadataExtensionName = "ut_metadata"
+)
 
 func SupportedExtensions() extensions.Extensions {
-	supported := []string{""}
+	supported := []string{UtMetadataExtensionName}
 
 	extensions, err := extensions.New(supported)
 	if err != nil {

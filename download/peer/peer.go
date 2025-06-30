@@ -108,47 +108,70 @@ func (peer *Peer) Handshake(infoHash [sha1.Size]byte) error {
 }
 
 func (peer *Peer) RequestMetadata() ([]byte, error) {
-	var data []byte
-	currentPiece := 0
+Outer:
 	for {
-		request := message.UtMetadataRequest{Piece: currentPiece}
-		_, err := peer.connection.Write(request.Encode())
-		if err != nil {
-			return nil, fmt.Errorf("failed to send metadata request: %w", err)
-		}
-
 		receivedMessage, err := message.Decode(peer.connection)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode message: %w", err)
 		}
 
-	Receiving:
-		for {
-			switch msg := receivedMessage.(type) {
-			case *message.UtMetadataData:
-				if msg.Piece != currentPiece {
-					break
-				} else {
-					currentPiece++
-				}
-
-				if data == nil {
-					data = make([]byte, msg.TotalSize)
-				}
-
-				startIndex := msg.Piece * constants.UtMetadataBlockLength
-				endIndex := startIndex + len(msg.Data)
-
-				copy(data[startIndex:endIndex], msg.Data)
-
-				if currentPiece*constants.UtMetadataBlockLength >= len(data) {
-					return data, nil
-				}
-
-				break Receiving
-			case *message.UtMetadataReject:
-				return nil, fmt.Errorf("peer rejected to provide ut_metadata data")
+		switch msg := receivedMessage.(type) {
+		case *message.ExtendedHandshake:
+			peer.availableExtensions, err = extensions.FromMap(msg.SupportedExtensions)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode extensions: %w", err)
 			}
+
+			peer.clientName = msg.ClientName
+
+			break Outer
+		}
+	}
+
+	data, totalSize, err := peer.requestMetadataPiece(0)
+	if err != nil {
+		return nil, err
+	}
+
+	totalPieces := totalSize / constants.UtMetadataBlockLength
+	if totalSize%constants.UtMetadataBlockLength != 0 {
+		totalPieces++
+	}
+
+	for piece := range totalPieces - 1 {
+		newData, _, err := peer.requestMetadataPiece(piece + 1)
+		if err != nil {
+			return nil, err
+		}
+
+		data = append(data, newData...)
+	}
+
+	return data, nil
+}
+
+func (peer *Peer) requestMetadataPiece(piece int) (data []byte, totalSize int, errr error) {
+	request := message.UtMetadataRequest{Piece: piece, Extensions: &peer.availableExtensions}
+	_, err := peer.connection.Write(request.Encode())
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to send metadata request: %w", err)
+	}
+
+	for {
+		receivedMessage, err := message.Decode(peer.connection)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to decode message: %w", err)
+		}
+
+		switch msg := receivedMessage.(type) {
+		case *message.UtMetadataData:
+			if msg.Piece != piece {
+				continue
+			}
+
+			return msg.Data, msg.TotalSize, nil
+		case *message.UtMetadataReject:
+			return nil, 0, fmt.Errorf("peer rejected to provide ut_metadata data")
 		}
 	}
 }

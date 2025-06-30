@@ -9,6 +9,7 @@ import (
 
 	"github.com/mertwole/bittorrent-cli/download/bencode"
 	"github.com/mertwole/bittorrent-cli/download/peer/constants"
+	"github.com/mertwole/bittorrent-cli/download/peer/extensions"
 )
 
 const maxPayloadLength = 100_000_000
@@ -89,18 +90,26 @@ type utMetadata struct {
 	TotalSize   *int `bencode:"total_size"`
 
 	dataPayload []byte
+
+	extensions *extensions.Extensions
 }
 
 type UtMetadataRequest struct {
 	Piece int
+
+	Extensions *extensions.Extensions
 }
 type UtMetadataData struct {
 	Piece     int
 	TotalSize int
 	Data      []byte
+
+	Extensions *extensions.Extensions
 }
 type UtMetadataReject struct {
 	Piece int
+
+	Extensions *extensions.Extensions
 }
 type UtMetadataUnknown struct{}
 
@@ -198,8 +207,7 @@ func (msg *utMetadata) Encode() []byte {
 		}
 	}
 
-	supportedExtensions := constants.SupportedExtensions()
-	msgID, ok := supportedExtensions.GetID(constants.UtMetadataExtensionName)
+	msgID, ok := msg.extensions.GetID(constants.UtMetadataExtensionName)
 	if !ok {
 		log.Panicf("failed to get extension ID by name: %v", err)
 	}
@@ -209,7 +217,11 @@ func (msg *utMetadata) Encode() []byte {
 }
 
 func (msg *UtMetadataRequest) Encode() []byte {
-	return (&utMetadata{MessageType: utMetadataRequest, Piece: msg.Piece}).Encode()
+	return (&utMetadata{
+		MessageType: utMetadataRequest,
+		Piece:       msg.Piece,
+		extensions:  msg.Extensions,
+	}).Encode()
 }
 
 func (msg *UtMetadataData) Encode() []byte {
@@ -218,11 +230,16 @@ func (msg *UtMetadataData) Encode() []byte {
 		Piece:       msg.Piece,
 		TotalSize:   &msg.TotalSize,
 		dataPayload: msg.Data,
+		extensions:  msg.Extensions,
 	}).Encode()
 }
 
 func (msg *UtMetadataReject) Encode() []byte {
-	return (&utMetadata{MessageType: utMetadataReject, Piece: msg.Piece}).Encode()
+	return (&utMetadata{
+		MessageType: utMetadataReject,
+		Piece:       msg.Piece,
+		extensions:  msg.Extensions,
+	}).Encode()
 }
 
 func (msg *UtMetadataUnknown) Encode() []byte {

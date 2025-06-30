@@ -100,6 +100,11 @@ func Serialize(writer io.Writer, value any) error {
 			fieldName := fields[fieldKey]
 
 			field := valueValue.FieldByName(fieldName)
+			fieldType, _ := valueValue.Type().FieldByName(fieldName)
+			if !fieldType.IsExported() {
+				continue
+			}
+
 			fieldInterface := field.Interface()
 
 			fieldInterfaceKind := reflect.TypeOf(fieldInterface).Kind()

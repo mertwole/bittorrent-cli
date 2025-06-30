@@ -12,6 +12,7 @@ import (
 const logFileName = "log"
 
 var torrentFileName = flag.String("torrent", "./data/torrent.torrent", "Path to the .torrent file")
+var magnetLink = flag.String("magnet", "", "Magnet link to download from")
 var downloadFolderName = flag.String("download", "./data", "Path to the download folder")
 var interactiveMode = flag.Bool("interactive", true, "Whether the client should be run in an interactive mode")
 
@@ -31,11 +32,20 @@ func main() {
 	if *interactiveMode {
 		ui.StartUI()
 	} else {
-		download, err := download.New(*torrentFileName, *downloadFolderName)
-		if err != nil {
-			log.Fatalf("failed to start download: %v", err)
-		}
+		if *magnetLink != "" {
+			download, err := download.LoadFromMagnetLink(*magnetLink, *downloadFolderName)
+			if err != nil {
+				log.Fatalf("failed to start download from magnet link: %v", err)
+			}
 
-		download.Start()
+			download.Start()
+		} else {
+			download, err := download.New(*torrentFileName, *downloadFolderName)
+			if err != nil {
+				log.Fatalf("failed to start download from torrent file: %v", err)
+			}
+
+			download.Start()
+		}
 	}
 }

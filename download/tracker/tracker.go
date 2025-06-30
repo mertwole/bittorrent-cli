@@ -19,6 +19,7 @@ import (
 
 const maxAnnounceResponseLength = 1024
 const udpReadTimeout = time.Second * 20
+const minRequestInterval = time.Second * 10
 
 const URLDataOption = 0x2
 const EndOfOptions = 0x0
@@ -88,6 +89,7 @@ func (tracker *Tracker) ListenForPeers(ctx context.Context, listeningPort uint16
 		log.Printf("Discovered %d peers", len(response.Peers))
 
 		tracker.interval = time.Second * time.Duration(response.Interval)
+		tracker.interval = max(tracker.interval, minRequestInterval)
 		for _, peer := range response.Peers {
 			select {
 			case peers <- peer:

@@ -107,6 +107,7 @@ func (peer *Peer) Handshake(infoHash [sha1.Size]byte) error {
 	return nil
 }
 
+// TODO: Make cancellable and get rid of Peer.Close()
 func (peer *Peer) RequestMetadata() ([]byte, error) {
 Outer:
 	for {
@@ -148,6 +149,10 @@ Outer:
 	}
 
 	return data, nil
+}
+
+func (peer *Peer) Close() {
+	peer.connection.Close()
 }
 
 func (peer *Peer) requestMetadataPiece(piece int) (data []byte, totalSize int, errr error) {

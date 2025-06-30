@@ -1,0 +1,60 @@
+services:
+  bittorrent-cli:
+    build:
+      context: ../
+      dockerfile: ./Dockerfile
+    command: --download=/tmp --interactive=false --magnet='magnet:?xt=urn:btih:dbdf7a09a84e4c8afe7b72b9b171816a14c4acd8&tr=http%3A%2F%2Ftracker%3A8000%2Fannounce'
+    volumes:
+      - ./torrent:/torrent
+    tmpfs:
+      - /tmp
+    networks:
+      swarm:
+        ipv4_address: 10.5.0.100
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "32m"
+    depends_on:
+      tracker:
+        condition: service_healthy
+
+  seed:
+    build:
+      context: ./
+      dockerfile: ./transmission-cli-seed.Dockerfile
+    networks:
+      swarm:
+        ipv4_address: 10.5.0.200
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "32m"
+    depends_on:
+      tracker:
+        condition: service_healthy
+
+  tracker:
+    image: jarylc/bittorrent-tracker
+    environment:
+      - PORT=8000
+      - HTTP=1
+      - UDP=0
+      - WS=0
+      - INTERVAL=10000
+    networks:
+      swarm:
+        ipv4_address: 10.5.0.250
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider tracker:8000/stats || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+networks:
+  swarm:
+    driver: bridge
+    ipam:
+     config:
+       - subnet: 10.5.0.0/16
+         gateway: 10.5.0.1

@@ -113,6 +113,8 @@ func loadMetadataFromMagnetLink(link *magnet_link.Data) ([]byte, error) {
 	peerID := [20]byte{0, 2, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 	ctx, cancelTrackerListening := context.WithCancel(context.Background())
 	discoveredPeers := make(chan tracker.PeerInfo, discoveredPeersQueueSize)
+	// TODO: Accept incoming connections as well
+	var listenPort uint16 = 60000
 
 	for _, trackerURL := range link.Trackers {
 		tracker := tracker.NewTracker(trackerURL,
@@ -120,7 +122,7 @@ func loadMetadataFromMagnetLink(link *magnet_link.Data) ([]byte, error) {
 			0,
 			peerID,
 		)
-		go tracker.ListenForPeers(ctx, 0, discoveredPeers)
+		go tracker.ListenForPeers(ctx, listenPort, discoveredPeers)
 	}
 
 	knownPeers := make([]tracker.PeerInfo, 0)
@@ -164,6 +166,8 @@ func loadMetadataFromMagnetLink(link *magnet_link.Data) ([]byte, error) {
 		if err != nil {
 			log.Printf("failed to download data from peer: %v. reconnecting", err)
 		}
+
+		peer.Close()
 
 		cancelTrackerListening()
 

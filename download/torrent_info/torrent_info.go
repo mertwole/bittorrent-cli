@@ -11,6 +11,7 @@ import (
 	"github.com/mertwole/bittorrent-cli/download/bencode"
 )
 
+// TODO: Nest Metadata here.
 type TorrentInfo struct {
 	Trackers    []*url.URL
 	Pieces      [][sha1.Size]byte
@@ -18,7 +19,18 @@ type TorrentInfo struct {
 	TotalLength int
 	Name        string
 	Files       []FileInfo
-	InfoHash    [sha1.Size]byte
+
+	InfoHash [sha1.Size]byte
+}
+
+type Metadata struct {
+	Pieces      [][sha1.Size]byte
+	PieceLength int
+	Name        string
+	Files       []FileInfo
+	TotalLength int
+
+	InfoHash [sha1.Size]byte
 }
 
 type FileInfo struct {
@@ -112,6 +124,54 @@ func Decode(reader io.Reader) (*TorrentInfo, error) {
 		PieceLength: bencodeTorrent.Info.PieceLength,
 		TotalLength: totalLength,
 		Name:        bencodeTorrent.Info.Name,
+		Files:       files,
+		InfoHash:    info_hash,
+	}, nil
+}
+
+func DecodeMetadata(reader io.Reader) (*Metadata, error) {
+	bencodeMetadata := bencodeInfo{}
+	err := bencode.Deserialize(reader, &bencodeMetadata)
+	if err != nil {
+		return nil, err
+	}
+
+	var pieces [][sha1.Size]byte
+
+	for chunk := range slices.Chunk([]byte(bencodeMetadata.Pieces), sha1.Size) {
+		if len(chunk) != sha1.Size {
+			return nil, fmt.Errorf("invalid piece hash size: expected %d and got %d", sha1.Size, len(chunk))
+		}
+
+		pieces = append(pieces, [sha1.Size]byte(chunk))
+	}
+
+	totalLength := 0
+	files := make([]FileInfo, 0)
+	if bencodeMetadata.Files != nil {
+		for _, file := range *bencodeMetadata.Files {
+			totalLength += file.Length
+			files = append(files, FileInfo(file))
+		}
+	} else if bencodeMetadata.Length == nil {
+		return nil, fmt.Errorf("cannot parse either length or file list")
+	} else {
+		totalLength = *bencodeMetadata.Length
+	}
+
+	var serializedInfo bytes.Buffer
+	err = bencode.Serialize(&serializedInfo, &bencodeMetadata)
+	if err != nil {
+		return nil, err
+	}
+
+	info_hash := sha1.Sum(serializedInfo.Bytes())
+
+	return &Metadata{
+		Pieces:      pieces,
+		PieceLength: bencodeMetadata.PieceLength,
+		TotalLength: totalLength,
+		Name:        bencodeMetadata.Name,
 		Files:       files,
 		InfoHash:    info_hash,
 	}, nil

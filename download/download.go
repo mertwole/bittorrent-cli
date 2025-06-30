@@ -1,6 +1,7 @@
 package download
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"github.com/mertwole/bittorrent-cli/download/bitfield"
 	"github.com/mertwole/bittorrent-cli/download/downloaded_files"
 	"github.com/mertwole/bittorrent-cli/download/lsd"
+	"github.com/mertwole/bittorrent-cli/download/magnet_link"
 	"github.com/mertwole/bittorrent-cli/download/peer"
 	"github.com/mertwole/bittorrent-cli/download/pieces"
 	"github.com/mertwole/bittorrent-cli/download/torrent_info"
@@ -66,6 +68,107 @@ func New(fileName string, downloadFolderName string) (*Download, error) {
 		torrentInfo:      torrentInfo,
 		setPaused:        make(chan bool, setPausedChannelSize),
 	}, nil
+}
+
+func LoadFromMagnetLink(link string, downloadFolderName string) (*Download, error) {
+	parsed, err := magnet_link.Decode(link)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode magnet link: %w", err)
+	}
+
+	metadata, err := loadMetadataFromMagnetLink(parsed)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load metadata from the magnet link: %w", err)
+	}
+
+	metadataReader := bytes.NewReader(metadata)
+
+	decodedMetadata, err := torrent_info.DecodeMetadata(metadataReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode torrent file: %w", err)
+	}
+
+	torrentInfo := torrent_info.TorrentInfo{
+		Trackers:    parsed.Trackers,
+		Pieces:      decodedMetadata.Pieces,
+		PieceLength: decodedMetadata.PieceLength,
+		TotalLength: decodedMetadata.TotalLength,
+		Name:        decodedMetadata.Name,
+		Files:       decodedMetadata.Files,
+		InfoHash:    decodedMetadata.InfoHash,
+	}
+
+	pieces := pieces.New(len(decodedMetadata.Pieces))
+	downloadedPieces := downloaded_files.New(&torrentInfo, downloadFolderName)
+
+	return &Download{
+		Pieces:           pieces,
+		downloadedPieces: downloadedPieces,
+		torrentInfo:      &torrentInfo,
+		setPaused:        make(chan bool, setPausedChannelSize),
+	}, nil
+}
+
+func loadMetadataFromMagnetLink(link *magnet_link.Data) ([]byte, error) {
+	peerID := [20]byte{0, 2, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	ctx, cancelTrackerListening := context.WithCancel(context.Background())
+	discoveredPeers := make(chan tracker.PeerInfo, discoveredPeersQueueSize)
+
+	for _, trackerURL := range link.Trackers {
+		tracker := tracker.NewTracker(trackerURL,
+			link.InfoHash,
+			0,
+			peerID,
+		)
+		go tracker.ListenForPeers(ctx, 0, discoveredPeers)
+	}
+
+	knownPeers := make([]tracker.PeerInfo, 0)
+	for {
+		peerInfo := <-discoveredPeers
+
+		alreadyKnown := false
+		for _, peer := range knownPeers {
+			if peer.IP.Equal(peerInfo.IP) {
+				alreadyKnown = true
+				break
+			}
+		}
+
+		if !alreadyKnown {
+			knownPeers = append(knownPeers, peerInfo)
+		} else {
+			continue
+		}
+
+		log.Printf("connecting to the peer %+v", peerInfo)
+
+		peer := peer.Peer{}
+		err := peer.Connect(&peerInfo, nil)
+		if err != nil {
+			log.Printf("failed to connect to the peer: %v", err)
+			continue
+		}
+
+		log.Printf("connected to the peer %+v", peerInfo)
+
+		err = peer.Handshake(link.InfoHash)
+		if err != nil {
+			log.Printf("failed to handshake with the peer: %v", err)
+			continue
+		}
+
+		log.Printf("handshaked with the peer %+v", peerInfo)
+
+		metadata, err := peer.RequestMetadata()
+		if err != nil {
+			log.Printf("failed to download data from peer: %v. reconnecting", err)
+		}
+
+		cancelTrackerListening()
+
+		return metadata, nil
+	}
 }
 
 func (download *Download) Start() {
@@ -224,7 +327,7 @@ func (download *Download) downloadFromPeer(
 		}
 
 		// TODO: Make cancellable.
-		err = peer.Handshake(download.torrentInfo)
+		err = peer.Handshake(download.torrentInfo.InfoHash)
 		if err != nil {
 			log.Printf("failed to handshake with the peer: %v", err)
 			return

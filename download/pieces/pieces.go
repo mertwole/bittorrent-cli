@@ -49,7 +49,7 @@ func (pieces *Pieces) GetBitfield() bitfield.Bitfield {
 	bitfield := bitfield.NewEmptyBitfield(len(pieces.pieces))
 	for i, state := range pieces.pieces {
 		if state == Downloaded {
-			bitfield.AddPiece(i)
+			bitfield.AddPiece(uint64(i))
 		}
 	}
 

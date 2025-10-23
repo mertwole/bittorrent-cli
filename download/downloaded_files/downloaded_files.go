@@ -13,14 +13,14 @@ import (
 )
 
 type DownloadedPiece struct {
-	Index  int
-	Offset int
+	Index  uint64
+	Offset uint64
 	Data   []byte
 }
 
 type DownloadedFiles struct {
 	files       []downloadedFile
-	pieceLength int
+	pieceLength uint64
 	pieceHashes [][sha1.Size]byte
 	status      Status
 	mutex       sync.RWMutex
@@ -28,7 +28,7 @@ type DownloadedFiles struct {
 
 type downloadedFile struct {
 	path   string
-	length int
+	length uint64
 	handle *os.File
 }
 
@@ -99,7 +99,7 @@ func (download *DownloadedFiles) Prepare(pieces *pieces.Pieces) error {
 		}
 
 		download.status.mutex.Lock()
-		download.status.Progress.AddPiece(i)
+		download.status.Progress.AddPiece(uint64(i))
 		download.status.mutex.Unlock()
 	}
 
@@ -134,15 +134,15 @@ func (download *DownloadedFiles) GetStatus() Status {
 }
 
 func (download *DownloadedFiles) ReadPiece(piece int) (*[]byte, error) {
-	offset := piece * download.pieceLength
+	offset := uint64(piece) * uint64(download.pieceLength)
 
-	currentOffset := 0
-	bytesRead := 0
+	currentOffset := uint64(0)
+	bytesRead := uint64(0)
 	readData := make([]byte, 0)
 
 	for _, file := range download.files {
 		if file.length+currentOffset > offset {
-			bytesToRead := min(download.pieceLength-bytesRead, file.length+currentOffset-offset, file.length)
+			bytesToRead := min(uint64(download.pieceLength)-bytesRead, file.length+currentOffset-offset, file.length)
 			readBytes := make([]byte, bytesToRead)
 
 			readOffset := int64(max(0, offset-currentOffset))
@@ -169,11 +169,11 @@ func (download *DownloadedFiles) ReadPiece(piece int) (*[]byte, error) {
 }
 
 func (download *DownloadedFiles) WritePiece(piece DownloadedPiece) error {
-	currentOffset := 0
+	currentOffset := uint64(0)
 	bytesWritten := 0
 	for _, file := range download.files {
 		if file.length+currentOffset > piece.Offset {
-			bytesToWrite := min(len(piece.Data)-bytesWritten, file.length+currentOffset-piece.Offset)
+			bytesToWrite := int(min(uint64(len(piece.Data)-bytesWritten), file.length+currentOffset-piece.Offset))
 
 			writeOffset := int64(max(0, piece.Offset-currentOffset))
 
@@ -226,7 +226,7 @@ const (
 	opened  createOrOpenFileAction = 2
 )
 
-func createOrOpenFile(path string, expectedLength int) (*os.File, createOrOpenFileAction, error) {
+func createOrOpenFile(path string, expectedLength uint64) (*os.File, createOrOpenFileAction, error) {
 	var file *os.File
 
 	fileAction := opened
@@ -275,7 +275,7 @@ func (download *DownloadedFiles) scanDonePieces(pcs *pieces.Pieces) error {
 		}
 
 		download.status.mutex.Lock()
-		download.status.Progress.AddPiece(i)
+		download.status.Progress.AddPiece(uint64(i))
 		download.status.mutex.Unlock()
 	}
 

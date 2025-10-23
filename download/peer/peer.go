@@ -266,7 +266,7 @@ func (peer *Peer) listen(
 		case *message.NotInterested:
 			// TODO
 		case *message.Have:
-			peer.availablePieces.AddPiece(msg.Piece)
+			peer.availablePieces.AddPiece(uint64(msg.Piece))
 		case *message.Bitfield:
 			peer.availablePieces = bitfield.NewConcurrentBitfield(
 				msg.Bitfield,
@@ -295,10 +295,10 @@ func (peer *Peer) listen(
 
 					newState = pieces.NotDownloaded
 				} else {
-					globalOffset := int(msg.Piece) * torrent.PieceLength
+					globalOffset := uint64(msg.Piece) * torrent.PieceLength
 					downloadedPieces.WritePiece(
 						downloaded_files.DownloadedPiece{
-							Index:  msg.Piece,
+							Index:  uint64(msg.Piece),
 							Offset: globalOffset,
 							Data:   donePiece.Data,
 						},
@@ -376,8 +376,8 @@ Outer:
 
 			log.Printf("requesting piece #%d", pieceIdx)
 
-			pieceLength := min(torrent.PieceLength, torrent.TotalLength-pieceIdx*torrent.PieceLength)
-			peer.pendingPieces.Insert(pieceIdx, pieceLength)
+			pieceLength := min(torrent.PieceLength, torrent.TotalLength-uint64(pieceIdx)*torrent.PieceLength)
+			peer.pendingPieces.Insert(pieceIdx, int(pieceLength))
 
 			for _, block := range peer.pendingPieces.GetPendingBlocksForPiece(pieceIdx) {
 				message := message.Request{

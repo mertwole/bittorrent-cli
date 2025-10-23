@@ -51,12 +51,12 @@ type announceRequest struct {
 type Tracker struct {
 	url      *url.URL
 	infoHash [sha1.Size]byte
-	length   int
+	length   uint64
 	peerID   [20]byte
 	interval time.Duration
 }
 
-func NewTracker(url *url.URL, infoHash [sha1.Size]byte, length int, peerID [20]byte) *Tracker {
+func NewTracker(url *url.URL, infoHash [sha1.Size]byte, length uint64, peerID [20]byte) *Tracker {
 	return &Tracker{
 		url:      url,
 		infoHash: infoHash,

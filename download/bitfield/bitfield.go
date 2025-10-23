@@ -44,7 +44,7 @@ func (bitfield *Bitfield) ToBytes() []byte {
 	return bitfield.data
 }
 
-func (bitfield *Bitfield) AddPiece(piece int) {
+func (bitfield *Bitfield) AddPiece(piece uint64) {
 	byteIdx := piece / 8
 	bitIdx := piece % 8
 
@@ -104,7 +104,7 @@ func (bitfield *ConcurrentBitfield) SetBitfield(newInner Bitfield) {
 	bitfield.inner = newInner
 }
 
-func (bitfield *ConcurrentBitfield) AddPiece(piece int) {
+func (bitfield *ConcurrentBitfield) AddPiece(piece uint64) {
 	bitfield.mutex.Lock()
 	defer bitfield.mutex.Unlock()
 

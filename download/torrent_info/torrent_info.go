@@ -15,8 +15,8 @@ import (
 type TorrentInfo struct {
 	Trackers    []*url.URL
 	Pieces      [][sha1.Size]byte
-	PieceLength int
-	TotalLength int
+	PieceLength uint64
+	TotalLength uint64
 	Name        string
 	Files       []FileInfo
 
@@ -25,17 +25,17 @@ type TorrentInfo struct {
 
 type Metadata struct {
 	Pieces      [][sha1.Size]byte
-	PieceLength int
+	PieceLength uint64
 	Name        string
 	Files       []FileInfo
-	TotalLength int
+	TotalLength uint64
 
 	InfoHash [sha1.Size]byte
 }
 
 type FileInfo struct {
 	Path   []string
-	Length int
+	Length uint64
 }
 
 type bencodeTorrent struct {
@@ -46,15 +46,15 @@ type bencodeTorrent struct {
 
 type bencodeInfo struct {
 	Pieces      string             `bencode:"pieces"`
-	PieceLength int                `bencode:"piece length"`
+	PieceLength uint64             `bencode:"piece length"`
 	Name        string             `bencode:"name"`
 	Files       *[]bencodeFileInfo `bencode:"files"`
-	Length      *int               `bencode:"length"`
+	Length      *uint64            `bencode:"length"`
 }
 
 type bencodeFileInfo struct {
 	Path   []string `bencode:"path"`
-	Length int      `bencode:"length"`
+	Length uint64   `bencode:"length"`
 }
 
 func Decode(reader io.Reader) (*TorrentInfo, error) {
@@ -97,7 +97,7 @@ func Decode(reader io.Reader) (*TorrentInfo, error) {
 		pieces = append(pieces, [sha1.Size]byte(chunk))
 	}
 
-	totalLength := 0
+	totalLength := uint64(0)
 	files := make([]FileInfo, 0)
 	if bencodeTorrent.Info.Files != nil {
 		for _, file := range *bencodeTorrent.Info.Files {
@@ -146,7 +146,7 @@ func DecodeMetadata(reader io.Reader) (*Metadata, error) {
 		pieces = append(pieces, [sha1.Size]byte(chunk))
 	}
 
-	totalLength := 0
+	totalLength := uint64(0)
 	files := make([]FileInfo, 0)
 	if bencodeMetadata.Files != nil {
 		for _, file := range *bencodeMetadata.Files {

@@ -98,22 +98,32 @@ func deserializeInt(reader io.Reader, entity any) error {
 	}
 
 	entityElem := reflect.ValueOf(entity).Elem()
-	entityElemKind := entityElem.Kind()
-	if entityElemKind != reflect.Int &&
-		entityElemKind != reflect.Int8 &&
-		entityElemKind != reflect.Int16 &&
-		entityElemKind != reflect.Int32 &&
-		entityElemKind != reflect.Int64 {
-		return fmt.Errorf("wrong field type: expected integer, got %s", entityKind)
-	}
 
 	if !entityElem.CanSet() {
 		return fmt.Errorf("cannot set integer value %s", entityElem)
 	}
 
-	entityElem.SetInt(value)
+	entityElemKind := entityElem.Kind()
 
-	return nil
+	if entityElemKind == reflect.Int ||
+		entityElemKind == reflect.Int8 ||
+		entityElemKind == reflect.Int16 ||
+		entityElemKind == reflect.Int32 ||
+		entityElemKind == reflect.Int64 {
+		entityElem.SetInt(value)
+		return nil
+	}
+
+	if entityElemKind == reflect.Uint ||
+		entityElemKind == reflect.Uint8 ||
+		entityElemKind == reflect.Uint16 ||
+		entityElemKind == reflect.Uint32 ||
+		entityElemKind == reflect.Uint64 {
+		entityElem.SetUint(uint64(value))
+		return nil
+	}
+
+	return fmt.Errorf("wrong field type: expected integer, got %s", entityKind)
 }
 
 func deserializeString(firstChar byte, reader io.Reader, entity any) error {

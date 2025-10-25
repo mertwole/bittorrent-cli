@@ -43,6 +43,12 @@ func StartUI() {
 	filePicker.AllowedTypes = []string{torrentFileExtension}
 	filePicker.AutoHeight = true
 
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic("cannot get user home directory")
+	}
+	filePicker.CurrentDirectory = home
+
 	mainScreen := tea.NewProgram(mainScreen{
 		downloadList:    &newList,
 		filePicker:      &filePicker,

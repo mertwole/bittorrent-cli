@@ -14,6 +14,14 @@ func TestIntDeserialize(t *testing.T) {
 	testDeepEqualDeserailize("i-10000000e", int(-10000000), t)
 }
 
+func TestUintDeserialize(t *testing.T) {
+	testDeepEqualDeserailize("i10e", uint8(10), t)
+	testDeepEqualDeserailize("i10e", uint16(10), t)
+	testDeepEqualDeserailize("i10000000e", uint32(10000000), t)
+	testDeepEqualDeserailize("i0e", uint64(0), t)
+	testDeepEqualDeserailize("i10000000e", uint(10000000), t)
+}
+
 func TestStringDeserialize(t *testing.T) {
 	testStringDeserialize("0:", "", t)
 	testStringDeserialize("4:test", "test", t)

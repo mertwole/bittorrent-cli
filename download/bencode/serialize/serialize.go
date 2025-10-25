@@ -21,6 +21,10 @@ func Serialize(writer io.Writer, value any) error {
 		intValue := valueValue.Int()
 
 		fmt.Fprintf(writer, "i%de", intValue)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		uintValue := valueValue.Uint()
+
+		fmt.Fprintf(writer, "i%de", uintValue)
 	case reflect.String:
 		stringValue := valueValue.String()
 		length := len(stringValue)

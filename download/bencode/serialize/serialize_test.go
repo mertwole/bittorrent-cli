@@ -14,6 +14,14 @@ func TestIntSerialize(t *testing.T) {
 	testSerialize(int(-123456789), "i-123456789e", t)
 }
 
+func TestUintSerialize(t *testing.T) {
+	testSerialize(uint8(10), "i10e", t)
+	testSerialize(uint16(1000), "i1000e", t)
+	testSerialize(uint32(123456789), "i123456789e", t)
+	testSerialize(uint64(0), "i0e", t)
+	testSerialize(uint(123456789), "i123456789e", t)
+}
+
 func TestStringSerialize(t *testing.T) {
 	testSerialize("test", "4:test", t)
 	testSerialize("with the spaces", "15:with the spaces", t)

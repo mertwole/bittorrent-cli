@@ -145,7 +145,7 @@ func (download *DownloadedFiles) ReadPiece(piece int) (*[]byte, error) {
 			bytesToRead := min(uint64(download.pieceLength)-bytesRead, file.length+currentOffset-offset, file.length)
 			readBytes := make([]byte, bytesToRead)
 
-			readOffset := int64(max(0, offset-currentOffset))
+			readOffset := max(0, int64(offset)-int64(currentOffset))
 
 			download.mutex.RLock()
 			_, err := file.handle.ReadAt(readBytes, readOffset)
@@ -170,12 +170,11 @@ func (download *DownloadedFiles) ReadPiece(piece int) (*[]byte, error) {
 
 func (download *DownloadedFiles) WritePiece(piece DownloadedPiece) error {
 	currentOffset := uint64(0)
-	bytesWritten := 0
+	bytesWritten := int64(0)
 	for _, file := range download.files {
 		if file.length+currentOffset > piece.Offset {
-			bytesToWrite := int(min(uint64(len(piece.Data)-bytesWritten), file.length+currentOffset-piece.Offset))
-
-			writeOffset := int64(max(0, piece.Offset-currentOffset))
+			bytesToWrite := min(int64(len(piece.Data))-bytesWritten, int64(file.length+currentOffset-piece.Offset))
+			writeOffset := max(0, int64(piece.Offset)-int64(currentOffset))
 
 			download.mutex.Lock()
 			_, err := file.handle.WriteAt((piece.Data)[bytesWritten:bytesWritten+bytesToWrite], writeOffset)
@@ -194,7 +193,7 @@ func (download *DownloadedFiles) WritePiece(piece DownloadedPiece) error {
 			}
 
 			bytesWritten += bytesToWrite
-			if bytesWritten >= len(piece.Data) {
+			if bytesWritten >= int64(len(piece.Data)) {
 				break
 			}
 		}
